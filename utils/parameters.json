@@ -1,0 +1,32 @@
+
+{
+    "Target_env": "SpaceInvaders-v0",
+
+    "H": 84,
+    "W": 84,
+    "GRAY": "False",
+
+    "Time_horizon": 100,
+    "Repeat_actions": 4,
+    "Frame_stack": 4,
+
+    "Reward_sacle": [-1, 1],
+    "Unroll": 10,
+    "Batch_size": 64,
+    "gamma": 0.99,
+    "cis_hat": 1,
+    "rho_hat": 1,
+
+    "Policy_loss_coef": 1,
+    "Value_loss_coef": 0.5,
+    "Entropy_coef": 5e-3,
+
+    "Learning_rate": 6e-4,
+    "Clip_gradient_norm": 40,
+
+    "log_save_interval": 50,
+    "model_save_interval": 100,
+    "gpu_idx": 0,
+
+    "num_worker_per_learner": 10
+}
