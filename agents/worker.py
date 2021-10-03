@@ -1,6 +1,7 @@
 import os, sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import time
+import gym
 import numpy as np
 import torch
 from utils.utils import obs_preprocess

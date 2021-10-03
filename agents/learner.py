@@ -1,7 +1,6 @@
 import os, sys
-
-
 import torch
+import torch.nn as nn
 import time
 import numpy as np
 import torch.multiprocessing as mp
@@ -56,22 +55,22 @@ class Learner():
 
         idx = 0
         while True:
-            # Basically, (seq, batch, feat)
+            # Basically, mini-batch-learning (seq, batch, feat)
             obs, actions, rewards, log_probs, masks, hidden_states, cell_states = self.q_batch.get(block=True)
             #print('Get batch shape: obs: {}, actions: {}, rewards: {}, log_probs: {}, masks: {}, hidden_states: {}, cell_states: {}'.format(obs.shape, actions.shape, rewards.shape, log_probs.shape, masks.shape, hidden_states.shape, cell_states.shape))
 
             lstm_states = (hidden_states, cell_states) 
-            target_log_probs, target_entropy, target_value, lstm_states = self.actor_critic( obs,         # (seq, batch, c, h, w)
+            target_log_probs, target_entropy, target_value, lstm_states = self.actor_critic( obs,         # (seq+1, batch, c, h, w)
                                                                                              lstm_states, # ( (1, batch, 256), (1, batch, 256) )
-                                                                                             masks,       # (seq, batch, 1)
-                                                                                             actions )    # (seq, batch, 1)
-            assert rewards.size()[0] == self.seq_len
+                                                                                             masks,       # (seq+1, batch, 1)
+                                                                                             actions )    # (seq+1, batch, 1)
+            assert rewards.size()[0] == self.seq_len+1
 
             # Copy on the same device at the input tensor
             vtrace = torch.zeros( target_value.size() ).to(self.device)
 
             # Computing importance sampling for truncation levels
-            importance_sampling = torch.exp( target_log_probs - log_probs )  # (seq, batch, 1)
+            importance_sampling = torch.exp( target_log_probs[:-1] - log_probs[:-1] )  # (seq, batch, 1)
             rho                 = torch.min( self.rho, importance_sampling ) # (seq, batch, 1)
             cis                 = torch.min( self.cis, importance_sampling ) # (seq, batch, 1)
 
@@ -81,12 +80,12 @@ class Learner():
             vtrace[-1] = target_value[-1]  # Bootstrapping
 
             # Computing the deltas
-            delta = rho * ( rewards + self.gamma * target_value[1:] - target_value[:-1] )
+            delta = rho * ( rewards[:-1] + self.gamma * target_value[1:] - target_value[:-1] )
 
             # Pytorch has no funtion such as tf.scan or theano.scan
             # This disgusting is compulsory for jit as reverse is not supported
-            for j in range(self.seq_len):
-                i = (self.seq_len - 1) - j
+            for j in range(self.seq_len):  # ex) seq: 10
+                i = (self.seq_len - 1) - j # 9 ~ 0
                 vtrace[i] = (
                     target_value[i]
                     + delta[i]
@@ -103,9 +102,7 @@ class Learner():
             # Losses computation
 
             # Value loss = l2 target loss -> (v_s - V_w(x_s))**2
-            loss_value = (v_targets - target_value).pow_(
-                2
-            )  # No need to remove bootstrap as diff equals zero
+            loss_value = (v_targets[:-1] - target_value[:-1]).pow_(2)  
             loss_value = loss_value.sum()
 
             # Policy loss -> - rho * advantage * log_policy & entropy bonus sum(policy*log_policy)
@@ -113,7 +110,7 @@ class Learner():
             # A = reward + gamma * V_{t+1} - V_t
             # L = - log_prob * A
             # The advantage function reduces variance
-            advantage = rewards + self.gamma * v_targets[1:] - target_value[:-1]
+            advantage = rewards[:-1] + self.gamma * v_targets[1:] - target_value[:-1]
             loss_policy = -rhos * target_log_probs[:-1] * advantage.detach()
             loss_policy = loss_policy.sum()
 
@@ -142,66 +139,3 @@ class Learner():
             if (idx % self.save_interval == 0):
                 torch.save(self.actor_critic, os.path.join(self.model_dir, f"impala_{idx}.pt"))
             idx+= 1
-        
-        
-        
-    # def learning(self):
-    #     torch.manual_seed(self.seed) # seed
-        
-    #     cis_hat = torch.Tensor( [self.cis_hat]*self.seq_len*self.batch_size ).view(self.seq_len, self.batch_size, 1).to(self.device) # (seq, batch, 1)
-    #     rho_hat = torch.Tensor( [self.rho_hat]*self.seq_len*self.batch_size ).view(self.seq_len, self.batch_size, 1).to(self.device) # (seq, batch, 1)
-
-    #     idx = 0
-    #     while True:
-    #         # Basically, (seq, batch, feat)
-    #         obs, actions, rewards, log_probs, masks, hidden_states, cell_states = self.q_batch.get(block=True)
-    #         #print('Get batch shape: obs: {}, actions: {}, rewards: {}, log_probs: {}, masks: {}, hidden_states: {}, cell_states: {}'.format(obs.shape, actions.shape, rewards.shape, log_probs.shape, masks.shape, hidden_states.shape, cell_states.shape))
-
-    #         lstm_states = (hidden_states, cell_states) 
-    #         target_log_probs, target_entropy, target_value, lstm_states = self.actor_critic( obs,         # (seq, batch, c, h, w)
-    #                                                                                          lstm_states, # ( (1, batch, 256), (1, batch, 256) )
-    #                                                                                          masks,       # (seq, batch, 1)
-    #                                                                                          actions )    # (seq, batch, 1)
-    #         importance_sampling = torch.exp( target_log_probs - log_probs ) # (seq, batch, 1)
-            
-    #         cis = torch.min(cis_hat, importance_sampling) ) # (seq, batch, 1)
-    #         rho = torch.min(rho_hat, importance_sampling) ) # (seq, batch, 1)
-      
-    #         policy_loss = 0
-    #         value_loss = 0
-    #         entropy_loss = 0
-
-    #         # Initialisation : v_{-1}
-    #         # v_s = V(x_s) + delta_sV + gamma*c_s(v_{s+1} - V(x_{s+1}))
-    #         vtrace = torch.zeros( (self.seq_len, self.batch_size, 1) ).to(self.device)
-    #         vtrace[-1] = target_value[-1]  # Bootstrapping
-            
-    #         """
-    #         v-trace targets are computed recursively
-    #         v_s = V(x_s) + delta_sV + gamma*c_s(v_{s+1} - V(x_{s+1}))
-    #         vtrace: n-step v-trace target (n -> seq_len)
-    #         """
-    #         for i in reversed( range(self.seq_len-1) ): # seq_len-1 -> seq_len-2 -> ... -> 0
-    #             delta_s = rho[i] * (rewards[i] + self.gamma * target_value[i+1]-target_value[i])
-    #             advantages = rho[i] * (rewards[i] + self.gamma * vtrace[i+1] - target_value[i])
-    #             vtrace[i] = target_value[i] + delta_s + self.gamma * cis[i] * (vtrace[i+1]-target_value[i+1])
-
-    #             policy_loss += target_log_probs[i]*advantages.detach()
-
-    #         policy_loss = policy_loss.sum()
-    #         value_loss = torch.sum( ( vtrace[:-1].detach() - target_value[:-1] ).pow_(2) )
-    #         entropy_loss = torch.sum( target_entropy )
-            
-    #         total_loss = self.policy_loss_coef*policy_loss + self.value_loss_coef*value_loss - self.entropy_coef*entropy_loss
-
-    #         self.optimizer.zero_grad()
-    #         total_loss.backward()
-    #         torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
-    #         print("total_loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_entropy_loss {:.5f}".format( total_loss.item(), value_loss.item(), policy_loss.item(), entropy_loss.item() ))
-    #         self.optimizer.step()
-            
-    #         self.writer.add_scalar('total_loss', float(total_loss.item()), idx)
-
-    #         if (idx % self.save_interval == 0):
-    #             torch.save(self.actor_critic, os.path.join(self.model_dir, f"impala_{idx}.pt"))
-    #         idx+= 1

@@ -82,7 +82,7 @@ if __name__ == '__main__':
     
     p = mp.Process(target=q_manager.make_batch) # sub-process
     p.start()
-    processes.append(p)
+    # processes.append(p)
 
     args.result_dir = os.path.join('results', str(args.learner_id))
     args.model_dir = os.path.join(args.result_dir, 'models')

@@ -271,24 +271,6 @@ class ActorCriticLSTM(nn.Module):
         x = self.body.forward(obs)
         x = x.view(seq, batch, self.hidden_size) # (seq, batch, hidden_size)
 
-
-        # # A
-        # # 2. LSTM LOOP (same length events but can be resetted)
-        # mask = mask.unsqueeze(1)
-        # x = x.unsqueeze(1)  # (seq_len, 1, batch, input)
-        # x_lstm = []
-        # for i in range(self.sequence_length + 1):
-        #     # One step pass of lstm
-        #     result, lstm_hxs = self.lstm(x[i], lstm_hxs)
-        #     # Zero lstm states is resetted
-        #     for state in lstm_hxs:
-        #         state = mask[i] * state
-
-        #     x_lstm.append(result)
-        # x = torch.stack(tensors=x_lstm, dim=0)  # (seq_len, batch, input)
-        
-        
-        # B
         x, lstm_hxs = self.lstm(x, lstm_hxs)
         lstm_hxs[0].detach_()
         lstm_hxs[1].detach_()
