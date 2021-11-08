@@ -9,35 +9,19 @@ from torch.optim import RMSprop
 from torch.utils.tensorboard import SummaryWriter
 
 class Learner():
-    def __init__(self, args, q_batch, actor_critic):
-        self.lr = args.lr
-        self.seed = args.seed
-        self.device = args.device
-        self.model_dir = args.model_dir
-        self.result_dir = args.result_dir
-        self.save_interval = args.save_interval
-        
-        self.gamma = args.gamma
-        self.cis_hat = args.cis_hat
-        self.rho_hat = args.rho_hat
-        
-        self.seq_len = args.seq_len
-        self.batch_size = args.batch_size
-        self.max_grad_norm = args.max_grad_norm
-        self.policy_loss_coef = args.policy_loss_coef
-        self.value_loss_coef = args.value_loss_coef
-        self.entropy_coef = args.entropy_coef
+    def __init__(self, args, q_batch, model):
+        self.args = args        
         
         self.q_batch = q_batch
-        self.actor_critic = actor_critic
-        self.optimizer = RMSprop(self.actor_critic.parameters(), lr=self.lr)
+        self.model = model
+        self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
         
-        self.actor_critic.share_memory() # make other processes can assess
+        self.model.share_memory() # make other processes can assess
 
         self.rho = nn.Parameter( torch.tensor(args.rho_hat, dtype=torch.float), requires_grad=False )
         self.cis = nn.Parameter( torch.tensor(args.cis_hat, dtype=torch.float), requires_grad=False )
 
-        self.writer = SummaryWriter(log_dir=self.result_dir) # tensorboard-log
+        self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
         
         
     def zeromq_settings(self):
@@ -51,8 +35,6 @@ class Learner():
         
         
     def learning(self):
-        torch.manual_seed(self.seed) # seed
-
         idx = 0
         while True:
             # Basically, mini-batch-learning (seq, batch, feat)
@@ -60,14 +42,14 @@ class Learner():
             #print('Get batch shape: obs: {}, actions: {}, rewards: {}, log_probs: {}, masks: {}, hidden_states: {}, cell_states: {}'.format(obs.shape, actions.shape, rewards.shape, log_probs.shape, masks.shape, hidden_states.shape, cell_states.shape))
 
             lstm_states = (hidden_states, cell_states) 
-            target_log_probs, target_entropy, target_value, lstm_states = self.actor_critic( obs,         # (seq+1, batch, c, h, w)
-                                                                                             lstm_states, # ( (1, batch, 256), (1, batch, 256) )
-                                                                                             masks,       # (seq+1, batch, 1)
-                                                                                             actions )    # (seq+1, batch, 1)
-            assert rewards.size()[0] == self.seq_len+1
+            target_log_probs, target_entropy, target_value, lstm_states = self.model( obs,         # (seq+1, batch, c, h, w)
+                                                                                      lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
+                                                                                      masks,       # (seq+1, batch, 1)
+                                                                                      actions )    # (seq+1, batch, 1)
+            assert rewards.size()[0] == self.args.seq_len+1
 
             # Copy on the same device at the input tensor
-            vtrace = torch.zeros( target_value.size() ).to(self.device)
+            vtrace = torch.zeros( target_value.size() ).to(self.args.device)
 
             # Computing importance sampling for truncation levels
             importance_sampling = torch.exp( target_log_probs[:-1] - log_probs[:-1] )  # (seq, batch, 1)
@@ -80,24 +62,24 @@ class Learner():
             vtrace[-1] = target_value[-1]  # Bootstrapping
 
             # Computing the deltas
-            delta = rho * ( rewards[:-1] + self.gamma * target_value[1:] - target_value[:-1] )
+            delta = rho * ( rewards[:-1] + self.args.gamma * target_value[1:] - target_value[:-1] )
 
             # Pytorch has no funtion such as tf.scan or theano.scan
             # This disgusting is compulsory for jit as reverse is not supported
-            for j in range(self.seq_len):  # ex) seq: 10
-                i = (self.seq_len - 1) - j # 9 ~ 0
+            for j in range(self.args.seq_len):  # ex) seq: 10
+                i = (self.args.seq_len - 1) - j # 9 ~ 0
                 vtrace[i] = (
                     target_value[i]
                     + delta[i]
-                    + self.gamma * cis[i] * (vtrace[i + 1] - target_value[i + 1])
+                    + self.args.gamma * cis[i] * (vtrace[i + 1] - target_value[i + 1])
                 )
 
             # Don't forget to detach !
             # We need to remove the bootstrapping
             vtrace, rho = vtrace.detach(), rho.detach()
       
-            v_targets = vtrace.to(self.device)
-            rhos = rho.to(self.device)
+            v_targets = vtrace.to(self.args.device)
+            rhos = rho.to(self.args.device)
 
             # Losses computation
 
@@ -110,7 +92,7 @@ class Learner():
             # A = reward + gamma * V_{t+1} - V_t
             # L = - log_prob * A
             # The advantage function reduces variance
-            advantage = rewards[:-1] + self.gamma * v_targets[1:] - target_value[:-1]
+            advantage = rewards[:-1] + self.args.gamma * v_targets[1:] - target_value[:-1]
             loss_policy = -rhos * target_log_probs[:-1] * advantage.detach()
             loss_policy = loss_policy.sum()
 
@@ -119,7 +101,7 @@ class Learner():
             entropy = target_entropy[:-1].sum()
 
             # Summing all the losses together
-            loss = self.policy_loss_coef*loss_policy + self.value_loss_coef*loss_value - self.entropy_coef*entropy
+            loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*entropy
 
             # These are only used for the statistics
             detached_losses = {
@@ -130,12 +112,12 @@ class Learner():
 
             self.optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
             print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_entropy {:.5f}".format( loss.item(), detached_losses["value"], detached_losses["policy"], detached_losses["entropy"] ))
             self.optimizer.step()
             
             self.writer.add_scalar('loss', float(loss.item()), idx)
 
-            if (idx % self.save_interval == 0):
-                torch.save(self.actor_critic, os.path.join(self.model_dir, f"impala_{idx}.pt"))
+            if (idx % self.args.save_interval == 0):
+                torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{idx}.pt"))
             idx+= 1

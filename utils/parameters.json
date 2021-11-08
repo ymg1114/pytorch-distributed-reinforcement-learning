@@ -1,12 +1,13 @@
 
 {
-    "Target_env": "SpaceInvaders-v0",
-
+    "Target_env": "CartPole-v0",
+    "need_conv": false,
     "H": 84,
     "W": 84,
-    "GRAY": "False",
+    "GRAY": false,
+    "hidden_size": 256,
 
-    "Time_horizon": 100,
+    "Time_horizon": 200,
     "Repeat_actions": 4,
     "Frame_stack": 4,
 
@@ -28,5 +29,5 @@
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker_per_learner": 10
+    "num_worker_per_learner": 1
 }

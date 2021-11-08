@@ -9,5 +9,5 @@ opencv-python
 torch
 torchvision
 tensorboard
-tensorflow
+tensorflow == 2.4.0
 tensorboardX

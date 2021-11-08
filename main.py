@@ -10,18 +10,12 @@ from copy import deepcopy
 from types import SimpleNamespace
 from torch.multiprocessing import Queue
 
-from networks.ActorCritic import ActorCriticLSTM
-
 from agents.learner import Learner
 from agents.worker import Worker
 
 from buffers.q_manager import QManager
 from buffers.storage import WorkerRolloutStorage
-
-# from levels import LEVELS
-# from utils.parmaterts import str2bool
-
-
+from threading import Thread
 
 if __name__ == '__main__':
     utils = os.path.join(os.getcwd(), "utils", 'parameters.json')
@@ -32,9 +26,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--env', type=str, default=p.Target_env)
     
+    parser.add_argument('--need-conv', type=bool, default=p.need_conv)
     parser.add_argument('--width', type=int, default=p.W)
     parser.add_argument('--height', type=int, default=p.H)
     parser.add_argument('--is-gray', type=bool, default=p.GRAY)
+    parser.add_argument('--hidden-size', type=int, default=p.hidden_size)
     
     parser.add_argument('--action-repeat', type=bool, default=p.Repeat_actions)
     parser.add_argument('--frame-stack', type=bool, default=p.Frame_stack)
@@ -62,29 +58,18 @@ if __name__ == '__main__':
     
     parser.add_argument('--num-worker-per-learner', type=int, default=p.num_worker_per_learner)
 
-    parser.add_argument('--learner-id', type=int, required=True, help='Learner ID')
+    parser.add_argument('--experiment-id', type=int, required=True, help='Experiment ID')
     
     args = parser.parse_args()
     args.device = torch.device('cuda:{p.gpu_idx}' if torch.cuda.is_available() else 'cpu')
 
-
     try:
-        # mp.set_start_method('forkserver', force=True)
         mp.set_start_method('spawn')
         print("spawn init")
     except RuntimeError:
         pass
-
-    # processes = []
-    q_worker = Queue(maxsize=300) # multi-worker-q-size per one-learner
-    q_batch = Queue(maxsize=args.batch_size) # (default) 64
-    q_manager = QManager(args, q_worker, q_batch)
     
-    p = mp.Process(target=q_manager.make_batch) # sub-process
-    p.start()
-    # processes.append(p)
-
-    args.result_dir = os.path.join('results', str(args.learner_id))
+    args.result_dir = os.path.join('results', str(args.experiment_id))
     args.model_dir = os.path.join(args.result_dir, 'models')
 
     if not os.path.isdir(args.model_dir):
@@ -92,40 +77,59 @@ if __name__ == '__main__':
 
     # Only to get obs, action space
     env = gym.make(args.env)
-    print('Action Space: ', env.action_space.n)
-    print('Observation Space: ', env.observation_space.shape)
-    # h, w, c = env.observation_space.shape[0], env.observation_space.shape[1], env.observation_space.shape[2]
-    h, w, c = p.H, p.W, env.observation_space.shape[2]
     n_outputs = env.action_space.n
+    print('Action Space: ', n_outputs)
+    print('Observation Space: ', env.observation_space.shape)
+    
+    if args.need_conv or len(env.observation_space.shape) > 1:
+        M = __import__("networks.models", fromlist=[None]).ConvLSTM
+        obs_shape = [ p.H, p.W, env.observation_space.shape[2] ]
+    else:
+        M = __import__("networks.models", fromlist=[None]).MlpLSTM
+        obs_shape = [ env.observation_space.shape[0] ]
     env.close()
+    
+    model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+    model.to(args.device)
+    
+    q_worker = Queue(maxsize=300) # q for multi-worker
+    q_batch = Queue(maxsize=args.batch_size) # q for learner
+    q_manager = QManager(args, q_worker, q_batch, *obs_shape)
+    
+    processes = []
+    m = mp.Process(target=q_manager.make_batch) # sub-process
+    m.start()
+    processes.append(m)
 
-    actor_critic = ActorCriticLSTM(h, w, c, n_outputs, args.seq_len)
-    actor_critic.to(args.device)
-    learner = Learner(args, q_batch, actor_critic)
+    learner = Learner(args, q_batch, model)
     
     workers = []
-    for i in range( len(args.num_worker_per_learner) ):
+    for i in range( args.num_worker_per_learner ):
         print('Build Worker {:d}'.format(i))
+        model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+        model.to( torch.device('cpu') )
+        
         rollouts = WorkerRolloutStorage()
         
-        actor_critic = ActorCriticLSTM(h, w, c, n_outputs, args.seq_len)
-        actor_critic.to( torch.device('cpu') )
-    
         worker_name = 'worker_' + str(i)
-        worker = Worker(args, q_worker, learner, actor_critic, rollouts, worker_name)
+        worker = Worker(args, q_worker, learner, model, rollouts, worker_name)
         workers.append(worker)
 
-    print('Run processes -> num_learner: 1, num_worker: {len(args.num_worker_per_learner)}')
-
+    print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker_per_learner}")
+    
     for w in workers:
-        p = mp.Process(target=w.collect_data) # sub-process
-        p.start()
-        # processes.append(p)
+        w = Thread(target=w.collect_data)
+        w.start()
+        
+    # for w in workers:
+    #     w = mp.Process(target=w.collect_data) # sub-processes
+    #     w.start()
+    #     processes.append(w)
 
-    learner.learning()
+    learner.learning() # main-process
 
-    # for p in processes:
-    #     p.join()
+    for p in processes:
+        p.join()
     
     
 

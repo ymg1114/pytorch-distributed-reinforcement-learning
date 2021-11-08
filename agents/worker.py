@@ -10,23 +10,17 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class Worker():
-    def __init__(self, args, q_worker, learner, actor_critic, rollouts, worker_name=None):
+    def __init__(self, args, q_worker, learner, model, rollouts, worker_name):
         self.device = torch.device('cpu')
-        self.env_name = args.env
-        self.seed = args.seed
-        self.result_dir = args.result_dir
-        self.time_horizon = args.time_horizon
-        self.reward_clipping = args.reward_clipping
-        self.repeat_actions = args.Repeat_actions
-        self.log_interval = args.log_interval
-        
+        self.args = args
+
         self.q_worker = q_worker # buffer of workers
         self.learner = learner
-        self.actor_critic = actor_critic
+        self.model = model
         self.rollouts = rollouts # buffer of each single-worker
         self.worker_name = worker_name
 
-        self.writer = SummaryWriter(log_dir=self.result_dir)
+        self.writer = SummaryWriter(log_dir=self.args.result_dir)
 
 
     def zeromq_settings(self):
@@ -40,42 +34,41 @@ class Worker():
 
     
     def log_tensorboard(self):
-        if self.num_epi % self.log_interval == 0 and self.num_epi != 0:
+        if self.num_epi % self.args.log_interval == 0 and self.num_epi != 0:
             self.writer.add_scalar(self.worker_name + '_epi_reward', self.epi_reward, self.num_epi)
             
         self.epi_reward = 0
 
     def collect_data(self):
-        print( 'Build Environment for {}'.format(self.worker_name) )
+        print( 'Build Environment for Worker {}'.format(self.worker_name) )
         
         # init-reset
-        torch.manual_seed(self.seed)
         done = False 
-        self.num_epi = 0
-        lstm_hidden_state = ( torch.zeros( (1, 1, 256) ), torch.zeros( (1, 1, 256) ) ) # (h_s, c_s) / (seq, batch, hidden)
+        self.num_epi, self.epi_reward = 0, 0
+        lstm_hidden_state = ( torch.zeros( (1, 1, self.args.hidden_size) ), torch.zeros( (1, 1, self.args.hidden_size) ) ) # (h_s, c_s) / (seq, batch, hidden)
         
-        self.env = gym.make(self.env_name)
+        self.env = gym.make(self.args.env)
 
         while True:
             obs = self.env.reset()
-            obs = obs_preprocess(obs)
+            obs = obs_preprocess(obs, self.args.need_conv)
             
-            self.actor_critic.load_state_dict( self.learner.actor_critic.state_dict() ) # reload learned-model from learner
-                                                                                        # may need transform from gpu-tensor to cpu-tensor
+            self.model.load_state_dict( self.learner.model.state_dict() ) # reload learned-model from learner
+                                                                          # may need transform from gpu-tensor to cpu-tensor
             # init worker-buffer
             self.rollouts.reset() # init or flush
 
-            for step in range(self.time_horizon):
-                action, log_prob, next_lstm_hidden_state = self.actor_critic.act( obs, lstm_hidden_state )
-                next_obs, reward, done, _ = self.env.step( action )
-                next_obs = obs_preprocess(next_obs)
+            for step in range(self.args.time_horizon):
+                action, log_prob, next_lstm_hidden_state = self.model.act( obs, lstm_hidden_state )
+                next_obs, reward, done, _ = self.env.step( action.item() )
+                next_obs = obs_preprocess(next_obs, self.args.need_conv)
                 
                 self.epi_reward += reward
-                reward = np.clip(reward, self.reward_clipping[0], self.reward_clipping[1])
+                reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
 
                 mask = torch.FloatTensor( [ [0.0] if done else [1.0] ] )
 
-                self.rollouts.insert(torch.from_numpy(obs),                      # (1, c, h, w)
+                self.rollouts.insert(obs,                                        # (1, c, h, w) or (1, D)
                                      action.view(1, -1),                         # (1, 1) / not one-hot, but action index
                                      torch.from_numpy( np.array( [[reward]] ) ), # (1, 1)
                                      log_prob.view(1, -1),                       # (1, 1)               
