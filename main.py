@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import torch.multiprocessing as mp
 
+from datetime import datetime
 from copy import deepcopy
 from types import SimpleNamespace
 from torch.multiprocessing import Queue
@@ -13,9 +14,10 @@ from torch.multiprocessing import Queue
 from agents.learner import Learner
 from agents.worker import Worker
 
-from buffers.q_manager import QManager
-from buffers.storage import WorkerRolloutStorage
+from buffers.manager import Manager
 from threading import Thread
+from utils.utils import ParameterServer
+
 
 if __name__ == '__main__':
     utils = os.path.join(os.getcwd(), "utils", 'parameters.json')
@@ -24,52 +26,52 @@ if __name__ == '__main__':
         p = SimpleNamespace(**p)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default=p.Target_env)
+    parser.add_argument('--env', type=str, default=p.target_env)
     
     parser.add_argument('--need-conv', type=bool, default=p.need_conv)
-    parser.add_argument('--width', type=int, default=p.W)
-    parser.add_argument('--height', type=int, default=p.H)
-    parser.add_argument('--is-gray', type=bool, default=p.GRAY)
+    parser.add_argument('--width', type=int, default=p.w)
+    parser.add_argument('--height', type=int, default=p.h)
+    parser.add_argument('--is-gray', type=bool, default=p.gray)
     parser.add_argument('--hidden-size', type=int, default=p.hidden_size)
     
-    parser.add_argument('--action-repeat', type=bool, default=p.Repeat_actions)
-    parser.add_argument('--frame-stack', type=bool, default=p.Frame_stack)
+    parser.add_argument('--action-repeat', type=bool, default=p.repeat_actions)
+    parser.add_argument('--frame-stack', type=bool, default=p.frame_stack)
     
-    parser.add_argument('--lr', type=float, default=p.Learning_rate)
+    parser.add_argument('--lr', type=float, default=p.learning_rate)
     
-    parser.add_argument('--seq-len', type=int, default=p.Unroll)
+    parser.add_argument('--seq-len', type=int, default=p.unroll_length)
 
-    parser.add_argument('--batch-size', type=int, default=p.Batch_size)
+    parser.add_argument('--batch-size', type=int, default=p.batch_size)
     parser.add_argument('--gamma', type=float, default=p.gamma)
     
-    parser.add_argument('--time-horizon', type=int, default=p.Time_horizon)
+    parser.add_argument('--time-horizon', type=int, default=p.time_horizon)
     
     parser.add_argument('--cis-hat', type=float, default=p.cis_hat)
     parser.add_argument('--rho-hat', type=float, default=p.rho_hat)
     
-    parser.add_argument('--policy-loss-coef', type=float, default=p.Policy_loss_coef)
-    parser.add_argument('--value-loss-coef', type=float, default=p.Value_loss_coef)
-    parser.add_argument('--entropy-coef', type=float, default=p.Entropy_coef)
+    parser.add_argument('--policy-loss-coef', type=float, default=p.policy_loss_coef)
+    parser.add_argument('--value-loss-coef', type=float, default=p.value_loss_coef)
+    parser.add_argument('--entropy-coef', type=float, default=p.entropy_coef)
     
-    parser.add_argument('--max-grad-norm', type=float, default=p.Clip_gradient_norm)
+    parser.add_argument('--max-grad-norm', type=float, default=p.clip_gradient_norm)
     parser.add_argument('--log-interval', type=int, default=p.log_save_interval)
     parser.add_argument('--save-interval', type=int, default=p.model_save_interval)
-    parser.add_argument('--reward-clip', type=list, default=p.Reward_sacle)
+    parser.add_argument('--reward-clip', type=list, default=p.reward_sacle)
     
-    parser.add_argument('--num-worker-per-learner', type=int, default=p.num_worker_per_learner)
-
-    parser.add_argument('--experiment-id', type=int, required=True, help='Experiment ID')
+    parser.add_argument('--num-worker', type=int, default=p.num_worker)
+    
+    parser.add_argument('--worker-port', type=int, default=p.worker_port)
+    parser.add_argument('--manager-port', type=int, default=p.manager_port)
+    parser.add_argument('--learner-port', type=int, default=p.learner_port)
     
     args = parser.parse_args()
     args.device = torch.device('cuda:{p.gpu_idx}' if torch.cuda.is_available() else 'cpu')
 
-    try:
-        mp.set_start_method('spawn')
-        print("spawn init")
-    except RuntimeError:
-        pass
-    
-    args.result_dir = os.path.join('results', str(args.experiment_id))
+    mp.set_start_method('spawn')
+    print("spawn init")
+
+    dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
+    args.result_dir = os.path.join('results', str(dt_string))
     args.model_dir = os.path.join(args.result_dir, 'models')
 
     if not os.path.isdir(args.model_dir):
@@ -89,49 +91,51 @@ if __name__ == '__main__':
         obs_shape = [ env.observation_space.shape[0] ]
     env.close()
     
-    model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
-    model.to(args.device)
+    WORKER_PORTS = [ port for port in range(args.worker_port, args.worker_port+args.num_worker) ]
     
-    q_worker = Queue(maxsize=300) # q for multi-worker
-    q_batch = Queue(maxsize=args.batch_size) # q for learner
-    q_manager = QManager(args, q_worker, q_batch, *obs_shape)
+    learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+    learner_model.to(args.device)
+    
+    manager = Manager(args, WORKER_PORTS, *obs_shape)
+    
+    learner = Learner(args, learner_model)
     
     processes = []
-    m = mp.Process(target=q_manager.make_batch) # sub-process
-    m.start()
-    processes.append(m)
+    l1 = mp.Process(target=learner.learning) # sub-process
+    l1.daemon = True  # ensure that the worker exits on process exit
 
-    learner = Learner(args, q_batch, model)
+    l2 = mp.Process(target=learner.subscribe_batchdata_from_manager) # sub-process
+    l2.daemon = True  
+
+    m1 = mp.Process(target=manager.subscribe_rollout_data_from_workers) # sub-process
+    m1.daemon = True
+
+    m2 = mp.Process(target=manager.make_batch) # sub-process
+    m2.daemon = True
     
-    workers = []
-    for i in range( args.num_worker_per_learner ):
+    processes.append(l1)  
+    processes.append(l2)
+    processes.append(m1)
+    processes.append(m2)
+    
+    for i in range( args.num_worker ):
         print('Build Worker {:d}'.format(i))
-        model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
-        model.to( torch.device('cpu') )
-        
-        rollouts = WorkerRolloutStorage()
+        worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+        worker_model.to( torch.device('cpu') )
         
         worker_name = 'worker_' + str(i)
-        worker = Worker(args, q_worker, learner, model, rollouts, worker_name)
-        workers.append(worker)
-
-    print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker_per_learner}")
-    
-    for w in workers:
-        w = Thread(target=w.collect_data)
-        w.start()
+        worker = Worker(args, worker_model, worker_name, WORKER_PORTS[i])
         
-    # for w in workers:
-    #     w = mp.Process(target=w.collect_data) # sub-processes
-    #     w.start()
-    #     processes.append(w)
-
-    learner.learning() # main-process
-
-    for p in processes:
-        p.join()
+        w = mp.Process(target=worker.collect_data) # sub-processes
+        w.daemon = True 
+        processes.append(w)
+        
+    print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
     
-    
+    [w.start() for w in processes]
+    [w.join() for w in processes]
+
+
 
 # 하나의 main에는 -> 1개의 러너, 여러개의 액터가 존재 (main 하나에 gpu 하나 할당 하면 되지 않을까 싶음)
 # main들 끼리 zeromq 통신이 가능해야함 -> 러너들 각자 독립적으로 학습 -> 그라디언트 발생 -> 모델 업데이트 (여기서 이제 모든 러너에 대해 싱크를 맞춰줘야 함)

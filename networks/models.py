@@ -140,7 +140,7 @@ class BodyType(Enum):
 
 
 class ConvLSTM(nn.Module):
-    def __init__(self, h, w, c, n_outputs, sequence_length, hidden_size, body=BodyType.DEEP):
+    def __init__(self, h, w, c, n_outputs, sequence_length, hidden_size, body=BodyType.SHALLOW):
         super(ConvLSTM, self).__init__()
 
         # Keeping some infos
@@ -293,8 +293,6 @@ class MlpLSTM(ConvLSTM):
 
         self.body = nn.Sequential(
             nn.Linear(in_features=self.input_size, out_features=self.hidden_size),
-            nn.ReLU(),
-            nn.Linear(in_features=self.hidden_size, out_features=self.hidden_size),
             nn.ReLU(),
         )
 

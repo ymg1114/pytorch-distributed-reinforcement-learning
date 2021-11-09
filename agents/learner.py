@@ -2,37 +2,52 @@ import os, sys
 import torch
 import torch.nn as nn
 import time
+import zmq
 import numpy as np
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.optim import RMSprop
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 
 class Learner():
-    def __init__(self, args, q_batch, model):
+    def __init__(self, args, model):
         self.args = args        
-        
-        self.q_batch = q_batch
+        self.q_batch = mp.Queue(maxsize=args.batch_size) # q for learner
+        # self.q_batch = q_batch
         self.model = model
-        self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
-        
         self.model.share_memory() # make other processes can assess
+        self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
 
         self.rho = nn.Parameter( torch.tensor(args.rho_hat, dtype=torch.float), requires_grad=False )
         self.cis = nn.Parameter( torch.tensor(args.cis_hat, dtype=torch.float), requires_grad=False )
 
-        self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
+        self.zeromq_settings()
         
-        
+        # self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
+
     def zeromq_settings(self):
-        pass
+        context = zmq.Context()
+        self.pub_socket = context.socket( zmq.PUB )
+        self.pub_socket.bind( f"tcp://127.0.0.1:{self.args.learner_port + 1}" ) # publish fresh learner model
 
-    def publish_model_to_main_manager(self):
-        pass
+        context = zmq.Context()
+        self.sub_socket = context.socket( zmq.SUB )
+        self.sub_socket.connect( f"tcp://127.0.0.1:{self.args.learner_port}" ) # subscribe batch-data
+        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, '')
 
-    def subscribe_exploration_data_from_workers(self):
-        pass
-        
+    def publish_model_to_workers(self, model_state_dict):
+        self.pub_socket.send_pyobj( model_state_dict )
+
+    def subscribe_batchdata_from_manager(self):
+        while True:
+            batch_data = self.sub_socket.recv_pyobj()
+            self.q_batch.put( batch_data )
+
+    def log_tensorboard(self, loss, detached_losses, idx):
+        self.writer.add_scalar('loss', float(loss.item()), idx)
+        self.writer.add_scalar('original_value_loss', detached_losses["value"], idx)
+        self.writer.add_scalar('original_policy_loss', detached_losses["policy"], idx)
+        self.writer.add_scalar('original_entropy', detached_losses["entropy"], idx)
         
     def learning(self):
         idx = 0
@@ -109,15 +124,19 @@ class Learner():
                 "value": loss_value.detach().cpu(),
                 "entropy": entropy.detach().cpu(),
             }
-
+            
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
             print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_entropy {:.5f}".format( loss.item(), detached_losses["value"], detached_losses["policy"], detached_losses["entropy"] ))
             self.optimizer.step()
             
-            self.writer.add_scalar('loss', float(loss.item()), idx)
+            self.publish_model_to_workers( self.model.cpu().state_dict() )
+            
+            # if (idx % self.args.log_interval == 0):
+            #     self.log_tensorboard(loss, detached_losses, idx)
 
             if (idx % self.args.save_interval == 0):
                 torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{idx}.pt"))
+            
             idx+= 1

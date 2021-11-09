@@ -15,7 +15,7 @@ with open( utils ) as f:
     p = SimpleNamespace(**p)
     
     
-if p.GRAY:
+if p.gray:
     transform = T.Compose([
                         T.Grayscale(num_out_channels=1),
                         # T.Resize( (p.H, p.W) ),
@@ -41,4 +41,15 @@ def obs_preprocess(obs, need_conv):
         return torch.from_numpy( obs ).unsqueeze(0).to(torch.float32) # (D) -> (1, D)
 
 
+class ParameterServer():
+    def __init__(self, lock):
+        self.lock = lock
+        self.weight = None
 
+    def pull(self):
+        with self.lock:
+            return self.weight
+
+    def push(self, weigth):
+        with self.lock:
+            self.weight = weigth

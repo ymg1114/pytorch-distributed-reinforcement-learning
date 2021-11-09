@@ -1,33 +1,36 @@
 
 {
-    "Target_env": "CartPole-v0",
+    "target_env": "CartPole-v1",
     "need_conv": false,
-    "H": 84,
-    "W": 84,
-    "GRAY": false,
-    "hidden_size": 256,
+    "h": 84,
+    "w": 84,
+    "gray": false,
+    "hidden_size": 64,
 
-    "Time_horizon": 200,
-    "Repeat_actions": 4,
-    "Frame_stack": 4,
+    "time_horizon": 500,
+    "repeat_actions": 4,
+    "frame_stack": 4,
 
-    "Reward_sacle": [-1, 1],
-    "Unroll": 10,
-    "Batch_size": 64,
+    "reward_sacle": [-1, 1],
+    "unroll_length": 5,
+    "batch_size": 256,
     "gamma": 0.99,
     "cis_hat": 1,
     "rho_hat": 1,
 
-    "Policy_loss_coef": 1,
-    "Value_loss_coef": 0.5,
-    "Entropy_coef": 5e-3,
+    "policy_loss_coef": 1,
+    "value_loss_coef": 0.5,
+    "entropy_coef": 1e-5,
 
-    "Learning_rate": 6e-4,
-    "Clip_gradient_norm": 40,
+    "learning_rate": 1e-4,
+    "clip_gradient_norm": 1,
 
     "log_save_interval": 50,
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker_per_learner": 1
+    "num_worker": 10,
+    "worker_port": 5000,
+    "manager_port": 6000,
+    "learner_port": 7000
 }

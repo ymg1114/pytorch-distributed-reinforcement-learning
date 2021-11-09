@@ -1,69 +1,86 @@
 import os, sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import time
+import zmq
 import gym
 import numpy as np
 import torch
-from utils.utils import obs_preprocess
-from torch.utils.tensorboard import SummaryWriter
-
+from buffers.storage import WorkerRolloutStorage
+from utils.utils import obs_preprocess, ParameterServer
+from tensorboardX import SummaryWriter
 
 
 class Worker():
-    def __init__(self, args, q_worker, learner, model, rollouts, worker_name):
+    def __init__(self, args, model, worker_name, port):
         self.device = torch.device('cpu')
         self.args = args
 
-        self.q_worker = q_worker # buffer of workers
-        self.learner = learner
+        # self.q_worker = q_worker # buffer of workers
         self.model = model
-        self.rollouts = rollouts # buffer of each single-worker
+        self.rollouts = WorkerRolloutStorage() # buffer of each single-worker
         self.worker_name = worker_name
+    
+        self.zeromq_settings( port )
+        
+        # self.writer = SummaryWriter(log_dir=self.args.result_dir)
 
-        self.writer = SummaryWriter(log_dir=self.args.result_dir)
+    def zeromq_settings(self, port):
+        # worker <-> manager
+        context = zmq.Context()
+        self.pub_socket = context.socket( zmq.PUB ) # publish rollout-data
+        self.pub_socket.bind( f"tcp://127.0.0.1:{port}" )
 
+        context = zmq.Context()
+        self.sub_socket = context.socket( zmq.SUB ) # subscribe fresh learner model
+        self.sub_socket.connect( f"tcp://127.0.0.1:{self.args.learner_port + 1}" )
+        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, '')
+        
+    def publish_rolloutdata_to_manager(self, rollouts):
+        rollout_data = (rollouts.obs[:], 
+                        rollouts.actions[:], 
+                        rollouts.rewards[:],
+                        rollouts.log_probs[:], 
+                        rollouts.masks[:],
+                        rollouts.lstm_hidden_states[:])
+        
+        self.pub_socket.send_pyobj( rollout_data )
 
-    def zeromq_settings(self):
-        pass
-
-    def publish_exploration_data_to_learner(self):
-        pass
-
-    def subscribe_model_from_main_manager(self):
-        pass
-
+    def subscribe_model_from_learner(self):
+        model_state_dict = self.sub_socket.recv_pyobj()
+        return model_state_dict
     
     def log_tensorboard(self):
         if self.num_epi % self.args.log_interval == 0 and self.num_epi != 0:
             self.writer.add_scalar(self.worker_name + '_epi_reward', self.epi_reward, self.num_epi)
-            
         self.epi_reward = 0
 
     def collect_data(self):
-        print( 'Build Environment for Worker {}'.format(self.worker_name) )
+        print( 'Build Environment for {}'.format(self.worker_name) )
         
         # init-reset
         done = False 
-        self.num_epi, self.epi_reward = 0, 0
+        num_epi, epi_reward = 0, 0
         lstm_hidden_state = ( torch.zeros( (1, 1, self.args.hidden_size) ), torch.zeros( (1, 1, self.args.hidden_size) ) ) # (h_s, c_s) / (seq, batch, hidden)
         
-        self.env = gym.make(self.args.env)
+        env = gym.make(self.args.env)
 
         while True:
-            obs = self.env.reset()
+            obs = env.reset()
             obs = obs_preprocess(obs, self.args.need_conv)
             
-            self.model.load_state_dict( self.learner.model.state_dict() ) # reload learned-model from learner
-                                                                          # may need transform from gpu-tensor to cpu-tensor
+            model_state_dict = self.subscribe_model_from_learner()
+            if model_state_dict:
+                self.model.load_state_dict( model_state_dict ) # reload learned-model from learner
+            
             # init worker-buffer
             self.rollouts.reset() # init or flush
 
             for step in range(self.args.time_horizon):
                 action, log_prob, next_lstm_hidden_state = self.model.act( obs, lstm_hidden_state )
-                next_obs, reward, done, _ = self.env.step( action.item() )
+                next_obs, reward, done, _ = env.step( action.item() )
                 next_obs = obs_preprocess(next_obs, self.args.need_conv)
                 
-                self.epi_reward += reward
+                epi_reward += reward
                 reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
 
                 mask = torch.FloatTensor( [ [0.0] if done else [1.0] ] )
@@ -82,15 +99,17 @@ class Worker():
                 if done:
                     break
                 
-            self.num_epi += 1
-            
-            # squeeze batch dim 
-            # (seq, batch, feat) / seq~=time_horizon, batch=1
-            self.q_worker.put( (self.rollouts.obs[:], 
-                                self.rollouts.actions[:], 
-                                self.rollouts.rewards[:],
-                                self.rollouts.log_probs[:], 
-                                self.rollouts.masks[:],
-                                self.rollouts.lstm_hidden_states[:]) )
+            num_epi += 1
 
-            self.log_tensorboard()
+            self.publish_rolloutdata_to_manager( self.rollouts )
+            
+            # # squeeze batch dim 
+            # # (seq, batch, feat) / seq~=time_horizon, batch=1
+            # self.q_worker.put( (self.rollouts.obs[:], 
+            #                     self.rollouts.actions[:], 
+            #                     self.rollouts.rewards[:],
+            #                     self.rollouts.log_probs[:], 
+            #                     self.rollouts.masks[:],
+            #                     self.rollouts.lstm_hidden_states[:]) )
+
+            # self.log_tensorboard()
