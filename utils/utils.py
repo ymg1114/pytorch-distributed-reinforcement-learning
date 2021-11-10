@@ -1,9 +1,11 @@
 import os, sys
 import cv2
 import json
-from numpy import dtype
 import torch
+import psutil
 import torchvision.transforms as T
+
+from numpy import dtype
 from types import SimpleNamespace
 
 # def str2bool(v):
@@ -40,7 +42,6 @@ def obs_preprocess(obs, need_conv):
     else:
         return torch.from_numpy( obs ).unsqueeze(0).to(torch.float32) # (D) -> (1, D)
 
-
 class ParameterServer():
     def __init__(self, lock):
         self.lock = lock
@@ -53,3 +54,20 @@ class ParameterServer():
     def push(self, weigth):
         with self.lock:
             self.weight = weigth
+            
+def kill_processes():
+    WORKER_PORTS = [ port for port in range(p.worker_port, p.worker_port+p.num_worker) ]
+    MANGER_PORTS = [ p.manager_port ]
+    LEARNER_PORTS = [ p.learner_port, p.learner_port+1  ]
+    
+    for port in WORKER_PORTS+MANGER_PORTS+LEARNER_PORTS:
+        os.system(f'taskkill /f /pid {port}')
+    
+    parent = psutil.Process( os.getppid() )
+    for child in parent.children(recursive=True):  # or parent.children() for recursive=False
+        child.kill()
+    parent.kill()
+    
+    
+if __name__ == "__main__":
+    kill_processes()

@@ -14,8 +14,7 @@ class Worker():
     def __init__(self, args, model, worker_name, port):
         self.device = torch.device('cpu')
         self.args = args
-
-        # self.q_worker = q_worker # buffer of workers
+        
         self.model = model
         self.rollouts = WorkerRolloutStorage() # buffer of each single-worker
         self.worker_name = worker_name
@@ -27,13 +26,13 @@ class Worker():
     def zeromq_settings(self, port):
         # worker <-> manager
         context = zmq.Context()
-        self.pub_socket = context.socket( zmq.PUB ) # publish rollout-data
-        self.pub_socket.bind( f"tcp://127.0.0.1:{port}" )
+        self.req_socket1 = context.socket( zmq.REQ ) # send rollout-data
+        self.req_socket1.bind( f"tcp://127.0.0.1:{port}" )
 
+        # worker <-> learner
         context = zmq.Context()
-        self.sub_socket = context.socket( zmq.SUB ) # subscribe fresh learner model
-        self.sub_socket.connect( f"tcp://127.0.0.1:{self.args.learner_port + 1}" )
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, '')
+        self.req_socket2 = context.socket( zmq.REQ ) # receive fresh learner model
+        self.req_socket2.connect( f"tcp://127.0.0.1:{self.args.learner_port + 1}" )
         
     def publish_rolloutdata_to_manager(self, rollouts):
         rollout_data = (rollouts.obs[:], 
@@ -43,18 +42,25 @@ class Worker():
                         rollouts.masks[:],
                         rollouts.lstm_hidden_states[:])
         
-        self.pub_socket.send_pyobj( rollout_data )
-
+        self.req_socket1.send_pyobj( rollout_data )
+        _ = self.req_socket1.recv_pyobj()
+        print( f'Worker: {self.worker_name}, Send rollout-data to manager !' )
+        
     def subscribe_model_from_learner(self):
-        model_state_dict = self.sub_socket.recv_pyobj()
-        return model_state_dict
-    
+        self.req_socket2.send_pyobj( "REQ_MODEL" )
+        
+        model_state_dict = self.req_socket2.recv_pyobj()
+        if model_state_dict:
+            self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
+            print( f'Worker: {self.worker_name}, Received fresh model from learner !' )
+        
+            
     def log_tensorboard(self):
         if self.num_epi % self.args.log_interval == 0 and self.num_epi != 0:
             self.writer.add_scalar(self.worker_name + '_epi_reward', self.epi_reward, self.num_epi)
         self.epi_reward = 0
 
-    def collect_data(self):
+    def collect_rolloutdata(self):
         print( 'Build Environment for {}'.format(self.worker_name) )
         
         # init-reset
@@ -67,11 +73,7 @@ class Worker():
         while True:
             obs = env.reset()
             obs = obs_preprocess(obs, self.args.need_conv)
-            
-            model_state_dict = self.subscribe_model_from_learner()
-            if model_state_dict:
-                self.model.load_state_dict( model_state_dict ) # reload learned-model from learner
-            
+                        
             # init worker-buffer
             self.rollouts.reset() # init or flush
 
@@ -102,14 +104,5 @@ class Worker():
             num_epi += 1
 
             self.publish_rolloutdata_to_manager( self.rollouts )
-            
-            # # squeeze batch dim 
-            # # (seq, batch, feat) / seq~=time_horizon, batch=1
-            # self.q_worker.put( (self.rollouts.obs[:], 
-            #                     self.rollouts.actions[:], 
-            #                     self.rollouts.rewards[:],
-            #                     self.rollouts.log_probs[:], 
-            #                     self.rollouts.masks[:],
-            #                     self.rollouts.lstm_hidden_states[:]) )
-
+            self.subscribe_model_from_learner()
             # self.log_tensorboard()

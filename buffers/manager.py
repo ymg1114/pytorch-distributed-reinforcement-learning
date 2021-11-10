@@ -7,37 +7,39 @@ import torch.multiprocessing as mp
 
 class Manager():
     def __init__(self, args, WORKER_PORTS, obs_shape):
-        # self.lock = mp.Lock()
         self.args = args
-        self.q_workers = mp.Queue(maxsize=3*args.batch_size) # q for multi-worker
-        # self.q_batch = mp.Queue(maxsize=args.batch_size) # q for learner
         self.obs_shape = obs_shape
         self.device = torch.device('cpu')
         
-        self.zeromq_settings(WORKER_PORTS)
+        self.zeromq_settings( WORKER_PORTS )
         
         self.reset_batch()
  
     def zeromq_settings(self, WORKER_PORTS):
-        # worker <-> manager
+        # manager <-> learner
         context = zmq.Context()
-        self.sub_socket = context.socket( zmq.SUB ) # subscribe rollout-data
-        for port in WORKER_PORTS:
-            self.sub_socket.connect( f"tcp://127.0.0.1:{port}" )
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, '')
+        self.req_socket = context.socket( zmq.REQ ) # send batch-data
+        self.req_socket.bind( f"tcp://127.0.0.1:{self.args.learner_port}" )
 
+        # manager <-> worker 
         context = zmq.Context()
-        self.pub_socket = context.socket( zmq.PUB ) # publish batch-data
-        self.pub_socket.bind( f"tcp://127.0.0.1:{self.args.learner_port}" )
+        self.rep_socket = context.socket( zmq.REP ) # receive rollout-data
+        for port in WORKER_PORTS:
+            self.rep_socket.connect( f"tcp://127.0.0.1:{port}" )
 
     def publish_batchdata_to_learner(self, batch_data):
-        self.pub_socket.send_pyobj( batch_data )
-
-    def subscribe_rollout_data_from_workers(self):
-        while True:
-            rollout_data = self.sub_socket.recv_pyobj()
-            self.q_workers.put( rollout_data )
- 
+        self.req_socket.send_pyobj( batch_data )
+        
+        _ = self.req_socket.redv_pyobj()
+        print( 'Send batch-data to learner !' )
+        
+    def subscribe_rolloutdata_from_workers(self, q_workers):
+        rollout_data = self.rep_socket.recv_pyobj()
+        q_workers.put( rollout_data )
+        
+        self.rep_socket.send_pyobj( "RECEIVED_ROLLOUT_DATA" )
+        print( 'Received rollout-data from workers !' )
+            
     def reset_batch(self):
         self.workers_obs           = torch.zeros(self.args.seq_len+1, 2*self.args.batch_size, self.obs_shape)
         # self.workers_actions       = torch.zeros(3*self.args.seq_len, 1, self.n_outputs) # one-hot
@@ -51,9 +53,10 @@ class Manager():
 
         self.batch_num = 0
 
-    def make_batch(self):
+    def make_batch(self, q_workers):
         while True:
-            data = self.q_workers.get(block=True)
+            self.subscribe_rolloutdata_from_workers( q_workers )
+            data = q_workers.get()
             seq_num = 0
             
             while True:
@@ -112,15 +115,6 @@ class Manager():
                         c_s.to(self.device))
         
         self.publish_batchdata_to_learner( batch_data )
-
-        # # put batch
-        # self.q_batch.put( (o.to(self.device), 
-        #                    a.to(self.device), 
-        #                    r.to(self.device), 
-        #                    log_p.to(self.device), 
-        #                    mask.to(self.device), 
-        #                    h_s.to(self.device), 
-        #                    c_s.to(self.device)) )
         
     def get_batch(self):
         o = self.workers_obs[:, :self.args.batch_size]    # (seq, batch, feat)

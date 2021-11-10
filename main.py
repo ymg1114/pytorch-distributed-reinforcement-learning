@@ -9,17 +9,30 @@ import torch.multiprocessing as mp
 from datetime import datetime
 from copy import deepcopy
 from types import SimpleNamespace
-from torch.multiprocessing import Queue
 
 from agents.learner import Learner
 from agents.worker import Worker
 
 from buffers.manager import Manager
 from threading import Thread
-from utils.utils import ParameterServer
+from utils.utils import ParameterServer, kill_processes
 
 
-if __name__ == '__main__':
+def worker_run(args, model, worker_name, port):
+    worker = Worker(args, model, worker_name, port)
+    worker.collect_rolloutdata()
+
+def manager_run(q_workers, args, WORKER_PORTS, obs_shape):
+    manager = Manager(args, WORKER_PORTS, *obs_shape)
+    manager.make_batch( q_workers )
+
+def learner_run(q_batchs, args, learner_model):
+    learner = Learner(args, learner_model)
+    learner.learning( q_batchs )
+
+
+
+if __name__ == '__main__':    
     utils = os.path.join(os.getcwd(), "utils", 'parameters.json')
     with open( utils ) as f:
         p = json.load(f)
@@ -67,75 +80,95 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.device = torch.device('cuda:{p.gpu_idx}' if torch.cuda.is_available() else 'cpu')
 
-    mp.set_start_method('spawn')
-    print("spawn init")
-
-    dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
-    args.result_dir = os.path.join('results', str(dt_string))
-    args.model_dir = os.path.join(args.result_dir, 'models')
-
-    if not os.path.isdir(args.model_dir):
-        os.makedirs(args.model_dir)
-
-    # Only to get obs, action space
-    env = gym.make(args.env)
-    n_outputs = env.action_space.n
-    print('Action Space: ', n_outputs)
-    print('Observation Space: ', env.observation_space.shape)
-    
-    if args.need_conv or len(env.observation_space.shape) > 1:
-        M = __import__("networks.models", fromlist=[None]).ConvLSTM
-        obs_shape = [ p.H, p.W, env.observation_space.shape[2] ]
-    else:
-        M = __import__("networks.models", fromlist=[None]).MlpLSTM
-        obs_shape = [ env.observation_space.shape[0] ]
-    env.close()
-    
-    WORKER_PORTS = [ port for port in range(args.worker_port, args.worker_port+args.num_worker) ]
-    
-    learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
-    learner_model.to(args.device)
-    
-    manager = Manager(args, WORKER_PORTS, *obs_shape)
-    
-    learner = Learner(args, learner_model)
-    
-    processes = []
-    l1 = mp.Process(target=learner.learning) # sub-process
-    l1.daemon = True  # ensure that the worker exits on process exit
-
-    l2 = mp.Process(target=learner.subscribe_batchdata_from_manager) # sub-process
-    l2.daemon = True  
-
-    m1 = mp.Process(target=manager.subscribe_rollout_data_from_workers) # sub-process
-    m1.daemon = True
-
-    m2 = mp.Process(target=manager.make_batch) # sub-process
-    m2.daemon = True
-    
-    processes.append(l1)  
-    processes.append(l2)
-    processes.append(m1)
-    processes.append(m2)
-    
-    for i in range( args.num_worker ):
-        print('Build Worker {:d}'.format(i))
-        worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
-        worker_model.to( torch.device('cpu') )
+    try:
+        mp.set_start_method('spawn')
+        print("spawn init")
         
-        worker_name = 'worker_' + str(i)
-        worker = Worker(args, worker_model, worker_name, WORKER_PORTS[i])
-        
-        w = mp.Process(target=worker.collect_data) # sub-processes
-        w.daemon = True 
-        processes.append(w)
-        
-    print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
-    
-    [w.start() for w in processes]
-    [w.join() for w in processes]
+        dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
+        args.result_dir = os.path.join('results', str(dt_string))
+        args.model_dir = os.path.join(args.result_dir, 'models')
 
+        if not os.path.isdir(args.model_dir):
+            os.makedirs(args.model_dir)
 
+        # Only to get obs, action space
+        env = gym.make(args.env)
+        n_outputs = env.action_space.n
+        print('Action Space: ', n_outputs)
+        print('Observation Space: ', env.observation_space.shape)
+        
+        if args.need_conv or len(env.observation_space.shape) > 1:
+            M = __import__("networks.models", fromlist=[None]).ConvLSTM
+            obs_shape = [ p.H, p.W, env.observation_space.shape[2] ]
+        else:
+            M = __import__("networks.models", fromlist=[None]).MlpLSTM
+            obs_shape = [ env.observation_space.shape[0] ]
+        env.close()
+        
+        WORKER_PORTS = [ port for port in range(args.worker_port, args.worker_port+args.num_worker) ]
+        
+        q_workers = mp.Queue(maxsize=3*args.batch_size) # q for multi-worker
+        q_batchs = mp.Queue(maxsize=args.batch_size)    # q for learner
+        
+        learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+        learner_model.to( args.device )
+        learner_model.share_memory()
+        
+        # manager = Manager(args, WORKER_PORTS, *obs_shape)
+        # learner = Learner(args, learner_model)
+        
+        processes = []
+        # m1 = mp.Process( target=manager.subscribe_rolloutdata_from_workers, args=(q_workers,) ) # sub-process
+        # m1.daemon = True # ensure that the worker exits on process exit
+        # m2 = mp.Process( target=manager.make_batch, args=(q_workers,) ) # sub-process
+        # m2.daemon = True
+        
+        m = mp.Process( target=manager_run, args=(q_workers, args, WORKER_PORTS, *obs_shape) ) # sub-processes
+        m.daemon = True 
+        processes.append(m)
+        
+        # l1 = mp.Process( target=learner.subscribe_batchdata_from_manager, args=(q_batchs,)  ) # sub-process
+        # l1.daemon = True  
+        # l2 = mp.Process( target=learner.learning, args=(q_batchs,) )  # sub-process
+        # l2.daemon = True  
+
+        l = mp.Process( target=learner_run, args=(q_batchs, args, learner_model) ) # sub-processes
+        l.daemon = True 
+        processes.append(l)
+
+        # processes.append(m1)
+        # processes.append(m2)
+        # processes.append(l1)  
+        # processes.append(l2)
+        
+        for i in range( args.num_worker ):
+            print('Build Worker {:d}'.format(i))
+            worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+            worker_model.to( torch.device('cpu') )
+            worker_model.share_memory()
+            
+            worker_name = 'worker_' + str(i)
+            # worker = Worker( args, worker_model, worker_name, WORKER_PORTS[i] )
+            
+            # w1 = mp.Process( target=worker.subscribe_model_from_learner ) # sub-processes
+            # w1.daemon = True 
+            # w2 = mp.Process( target=worker.collect_rolloutdata ) # sub-processes
+            # w2.daemon = True
+            # processes.append(w1)
+            # processes.append(w2)
+
+            w = mp.Process( target=worker_run, args=(args, worker_model, worker_name, WORKER_PORTS[i]) ) # sub-processes
+            w.daemon = True 
+            processes.append(w)
+            
+        print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
+        
+        [p.start() for p in processes]
+        [p.join() for p in processes]
+
+    finally:
+        kill_processes()
+        
 
 # 하나의 main에는 -> 1개의 러너, 여러개의 액터가 존재 (main 하나에 gpu 하나 할당 하면 되지 않을까 싶음)
 # main들 끼리 zeromq 통신이 가능해야함 -> 러너들 각자 독립적으로 학습 -> 그라디언트 발생 -> 모델 업데이트 (여기서 이제 모든 러너에 대해 싱크를 맞춰줘야 함)

@@ -12,8 +12,6 @@ from tensorboardX import SummaryWriter
 class Learner():
     def __init__(self, args, model):
         self.args = args        
-        self.q_batch = mp.Queue(maxsize=args.batch_size) # q for learner
-        # self.q_batch = q_batch
         self.model = model
         self.model.share_memory() # make other processes can assess
         self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
@@ -26,34 +24,41 @@ class Learner():
         # self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
 
     def zeromq_settings(self):
+        # learner <-> worker
         context = zmq.Context()
-        self.pub_socket = context.socket( zmq.PUB )
-        self.pub_socket.bind( f"tcp://127.0.0.1:{self.args.learner_port + 1}" ) # publish fresh learner model
+        self.rep_socket1 = context.socket( zmq.REP )
+        self.rep_socket1.bind( f"tcp://127.0.0.1:{self.args.learner_port + 1}" ) # send fresh learner model
 
+        # learner <-> manager
         context = zmq.Context()
-        self.sub_socket = context.socket( zmq.SUB )
-        self.sub_socket.connect( f"tcp://127.0.0.1:{self.args.learner_port}" ) # subscribe batch-data
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, '')
+        self.rep_socket2 = context.socket( zmq.REP )
+        self.rep_socket2.connect( f"tcp://127.0.0.1:{self.args.learner_port}" ) # receive batch-data
 
-    def publish_model_to_workers(self, model_state_dict):
-        self.pub_socket.send_pyobj( model_state_dict )
-
-    def subscribe_batchdata_from_manager(self):
-        while True:
-            batch_data = self.sub_socket.recv_pyobj()
-            self.q_batch.put( batch_data )
-
+    def send_model_to_workers(self, model_state_dict):
+        _ = self.rep_socket1.recv_pyobj()
+        
+        self.rep_socket1.send_pyobj( model_state_dict )
+        print( 'Send fresh model to workers !' )
+        
+    def recv_batchdata_from_manager(self, q_batchs):
+        batch_data = self.rep_socket2.recv_pyobj()
+        q_batchs.put( batch_data )
+        
+        self.rep_socket2.send_pyobj( "RECEIVED_BATCH_DATA" )
+        print( 'Received batch-data from manager !' )
+            
     def log_tensorboard(self, loss, detached_losses, idx):
         self.writer.add_scalar('loss', float(loss.item()), idx)
         self.writer.add_scalar('original_value_loss', detached_losses["value"], idx)
         self.writer.add_scalar('original_policy_loss', detached_losses["policy"], idx)
         self.writer.add_scalar('original_entropy', detached_losses["entropy"], idx)
         
-    def learning(self):
+    def learning(self, q_batchs):
         idx = 0
         while True:
+            self.recv_batchdata_from_manager(q_batchs)
             # Basically, mini-batch-learning (seq, batch, feat)
-            obs, actions, rewards, log_probs, masks, hidden_states, cell_states = self.q_batch.get(block=True)
+            obs, actions, rewards, log_probs, masks, hidden_states, cell_states = q_batchs.get()
             #print('Get batch shape: obs: {}, actions: {}, rewards: {}, log_probs: {}, masks: {}, hidden_states: {}, cell_states: {}'.format(obs.shape, actions.shape, rewards.shape, log_probs.shape, masks.shape, hidden_states.shape, cell_states.shape))
 
             lstm_states = (hidden_states, cell_states) 
@@ -131,7 +136,7 @@ class Learner():
             print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_entropy {:.5f}".format( loss.item(), detached_losses["value"], detached_losses["policy"], detached_losses["entropy"] ))
             self.optimizer.step()
             
-            self.publish_model_to_workers( self.model.cpu().state_dict() )
+            self.send_model_to_workers( self.model.cpu().state_dict() )
             
             # if (idx % self.args.log_interval == 0):
             #     self.log_tensorboard(loss, detached_losses, idx)
