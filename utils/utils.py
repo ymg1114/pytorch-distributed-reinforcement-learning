@@ -16,7 +16,6 @@ with open( utils ) as f:
     p = json.load(f)
     p = SimpleNamespace(**p)
     
-    
 if p.gray:
     transform = T.Compose([
                         T.Grayscale(num_out_channels=1),
@@ -31,7 +30,6 @@ else:
                         T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))]
                           )
     
-
 def obs_preprocess(obs, need_conv):
     if need_conv:
         # obs = cv2.cvtColor(obs, cv2.COLOR_BGRA2RGB)    
@@ -62,7 +60,7 @@ def kill_processes():
     
     for port in WORKER_PORTS+MANGER_PORTS+LEARNER_PORTS:
         os.system(f'taskkill /f /pid {port}')
-    
+        
     parent = psutil.Process( os.getppid() )
     for child in parent.children(recursive=True):  # or parent.children() for recursive=False
         child.kill()

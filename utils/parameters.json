@@ -13,7 +13,7 @@
 
     "reward_sacle": [-1, 1],
     "unroll_length": 5,
-    "batch_size": 256,
+    "batch_size": 128,
     "gamma": 0.99,
     "cis_hat": 1,
     "rho_hat": 1,
@@ -29,7 +29,7 @@
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker": 10,
+    "num_worker": 30,
     "worker_port": 5000,
     "manager_port": 6000,
     "learner_port": 7000

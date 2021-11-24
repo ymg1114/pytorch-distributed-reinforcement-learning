@@ -9,6 +9,7 @@ from buffers.storage import WorkerRolloutStorage
 from utils.utils import obs_preprocess, ParameterServer
 from tensorboardX import SummaryWriter
 
+local = "127.0.0.1"
 
 class Worker():
     def __init__(self, args, model, worker_name, port):
@@ -19,42 +20,41 @@ class Worker():
         self.rollouts = WorkerRolloutStorage() # buffer of each single-worker
         self.worker_name = worker_name
     
-        self.zeromq_settings( port )
-        
+        self.zeromq_set(port)
         # self.writer = SummaryWriter(log_dir=self.args.result_dir)
 
-    def zeromq_settings(self, port):
+    def zeromq_set(self, port):
         # worker <-> manager
         context = zmq.Context()
         self.req_socket1 = context.socket( zmq.REQ ) # send rollout-data
-        self.req_socket1.bind( f"tcp://127.0.0.1:{port}" )
+        self.req_socket1.bind( f"tcp://{local}:{port}" )
 
         # worker <-> learner
         context = zmq.Context()
         self.req_socket2 = context.socket( zmq.REQ ) # receive fresh learner model
-        self.req_socket2.connect( f"tcp://127.0.0.1:{self.args.learner_port + 1}" )
+        self.req_socket2.connect( f"tcp://{local}:{self.args.learner_port + 1}" )
         
-    def publish_rolloutdata_to_manager(self, rollouts):
-        rollout_data = (rollouts.obs[:], 
-                        rollouts.actions[:], 
-                        rollouts.rewards[:],
-                        rollouts.log_probs[:], 
-                        rollouts.masks[:],
-                        rollouts.lstm_hidden_states[:])
+    def req_rollout_to_manager(self):
+        rollout_data = (self.rollouts.obs[:], 
+                        self.rollouts.actions[:], 
+                        self.rollouts.rewards[:],
+                        self.rollouts.log_probs[:], 
+                        self.rollouts.masks[:],
+                        self.rollouts.lstm_hidden_states[:]
+                        )
         
         self.req_socket1.send_pyobj( rollout_data )
         _ = self.req_socket1.recv_pyobj()
-        print( f'Worker: {self.worker_name}, Send rollout-data to manager !' )
+        print( f'{self.worker_name}: Send rollout-data to manager !' )
         
-    def subscribe_model_from_learner(self):
+    def req_model_from_learner(self):
         self.req_socket2.send_pyobj( "REQ_MODEL" )
         
         model_state_dict = self.req_socket2.recv_pyobj()
         if model_state_dict:
             self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
-            print( f'Worker: {self.worker_name}, Received fresh model from learner !' )
+            print( f'{self.worker_name}: Received fresh model from learner !' )
         
-            
     def log_tensorboard(self):
         if self.num_epi % self.args.log_interval == 0 and self.num_epi != 0:
             self.writer.add_scalar(self.worker_name + '_epi_reward', self.epi_reward, self.num_epi)
@@ -67,9 +67,8 @@ class Worker():
         done = False 
         num_epi, epi_reward = 0, 0
         lstm_hidden_state = ( torch.zeros( (1, 1, self.args.hidden_size) ), torch.zeros( (1, 1, self.args.hidden_size) ) ) # (h_s, c_s) / (seq, batch, hidden)
-        
         env = gym.make(self.args.env)
-
+        
         while True:
             obs = env.reset()
             obs = obs_preprocess(obs, self.args.need_conv)
@@ -84,7 +83,6 @@ class Worker():
                 
                 epi_reward += reward
                 reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
-
                 mask = torch.FloatTensor( [ [0.0] if done else [1.0] ] )
 
                 self.rollouts.insert(obs,                                        # (1, c, h, w) or (1, D)
@@ -93,8 +91,6 @@ class Worker():
                                      log_prob.view(1, -1),                       # (1, 1)               
                                      mask,                                       # (1, 1)
                                      lstm_hidden_state)                          # (h_s, c_s) / (seq, batch, hidden)
-                
-                
                 obs = next_obs                                   # ( 1, c, h, w )
                 lstm_hidden_state = next_lstm_hidden_state       # ( (1, 1, d_h), (1, 1, d_c) )
                 
@@ -103,6 +99,6 @@ class Worker():
                 
             num_epi += 1
 
-            self.publish_rolloutdata_to_manager( self.rollouts )
-            self.subscribe_model_from_learner()
+            self.req_rollout_to_manager()
+            self.req_model_from_learner()
             # self.log_tensorboard()

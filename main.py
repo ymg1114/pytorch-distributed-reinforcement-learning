@@ -13,24 +13,40 @@ from types import SimpleNamespace
 from agents.learner import Learner
 from agents.worker import Worker
 
-from buffers.manager import Manager
+from buffers.req_manager import req_Manager
+from buffers.rep_manager import rep_Manager
+from buffers.learner_batch_manager import learner_batch_Manager
+from buffers.learner_update_manager import learner_update_Manager
 from threading import Thread
 from utils.utils import ParameterServer, kill_processes
 
-
+        
 def worker_run(args, model, worker_name, port):
     worker = Worker(args, model, worker_name, port)
-    worker.collect_rolloutdata()
+    worker.collect_rolloutdata() # collect rollout-data (multi-workers)
 
-def manager_run(q_workers, args, WORKER_PORTS, obs_shape):
-    manager = Manager(args, WORKER_PORTS, *obs_shape)
-    manager.make_batch( q_workers )
+def req_manager_run(q_workers, args, *obs_shape):
+    req_m = req_Manager(args, obs_shape)
+    req_m.make_batch(q_workers) # make_batch & send batch-data to learner
 
-def learner_run(q_batchs, args, learner_model):
+def rep_manager_run(q_workers, WORKER_PORTS):
+    rep_m = rep_Manager(WORKER_PORTS)
+    rep_m.rep_rollout_from_workers(q_workers) # received rollout-data from workers
+
+def learner_batch_manager_run(q_batchs, args):
+    l_m = learner_batch_Manager(args)
+    l_m.rep_batch_from_manager(q_batchs) # received batch-data from manager
+
+def run(q_batchs, args, learner_model, sub_procs):
     learner = Learner(args, learner_model)
-    learner.learning( q_batchs )
+    l = mp.Process( target=learner.zeromq_model_updates, args=(args, worker_model, worker_name, WORKER_PORTS[i]) ) # sub-processes
+    l.daemon = True 
+    sub_procs.append(l)
 
-
+    [ p.start() for p in sub_procs ]
+    # learner = Learner(args, learner_model)
+    learner.learning(q_batchs)
+    [ p.join() for p in sub_procs ]
 
 if __name__ == '__main__':    
     utils = os.path.join(os.getcwd(), "utils", 'parameters.json')
@@ -114,33 +130,19 @@ if __name__ == '__main__':
         learner_model.to( args.device )
         learner_model.share_memory()
         
-        # manager = Manager(args, WORKER_PORTS, *obs_shape)
-        # learner = Learner(args, learner_model)
-        
-        processes = []
-        # m1 = mp.Process( target=manager.subscribe_rolloutdata_from_workers, args=(q_workers,) ) # sub-process
-        # m1.daemon = True # ensure that the worker exits on process exit
-        # m2 = mp.Process( target=manager.make_batch, args=(q_workers,) ) # sub-process
-        # m2.daemon = True
-        
-        m = mp.Process( target=manager_run, args=(q_workers, args, WORKER_PORTS, *obs_shape) ) # sub-processes
-        m.daemon = True 
-        processes.append(m)
-        
-        # l1 = mp.Process( target=learner.subscribe_batchdata_from_manager, args=(q_batchs,)  ) # sub-process
-        # l1.daemon = True  
-        # l2 = mp.Process( target=learner.learning, args=(q_batchs,) )  # sub-process
-        # l2.daemon = True  
+        sub_procs = []
+        rep_m = mp.Process( target=rep_manager_run, args=(q_workers, WORKER_PORTS) ) # sub-processes
+        rep_m.daemon = True 
+        sub_procs.append(rep_m)
 
-        l = mp.Process( target=learner_run, args=(q_batchs, args, learner_model) ) # sub-processes
-        l.daemon = True 
-        processes.append(l)
-
-        # processes.append(m1)
-        # processes.append(m2)
-        # processes.append(l1)  
-        # processes.append(l2)
+        req_m = mp.Process( target=req_manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
+        req_m.daemon = True 
+        sub_procs.append(req_m)
         
+        l_m = mp.Process( target=learner_batch_manager_run, args=(q_batchs, args)  ) # sub-process
+        l_m.daemon = True  
+        sub_procs.append(l_m)
+                
         for i in range( args.num_worker ):
             print('Build Worker {:d}'.format(i))
             worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
@@ -148,35 +150,12 @@ if __name__ == '__main__':
             worker_model.share_memory()
             
             worker_name = 'worker_' + str(i)
-            # worker = Worker( args, worker_model, worker_name, WORKER_PORTS[i] )
-            
-            # w1 = mp.Process( target=worker.subscribe_model_from_learner ) # sub-processes
-            # w1.daemon = True 
-            # w2 = mp.Process( target=worker.collect_rolloutdata ) # sub-processes
-            # w2.daemon = True
-            # processes.append(w1)
-            # processes.append(w2)
-
             w = mp.Process( target=worker_run, args=(args, worker_model, worker_name, WORKER_PORTS[i]) ) # sub-processes
             w.daemon = True 
-            processes.append(w)
-            
+            sub_procs.append(w)
+
+        run( q_batchs, args, learner_model, sub_procs )
         print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
         
-        [p.start() for p in processes]
-        [p.join() for p in processes]
-
     finally:
         kill_processes()
-        
-
-# 하나의 main에는 -> 1개의 러너, 여러개의 액터가 존재 (main 하나에 gpu 하나 할당 하면 되지 않을까 싶음)
-# main들 끼리 zeromq 통신이 가능해야함 -> 러너들 각자 독립적으로 학습 -> 그라디언트 발생 -> 모델 업데이트 (여기서 이제 모든 러너에 대해 싱크를 맞춰줘야 함)
-# 그런후 (모델 업데이트에 대해 싱크가 맞춰졌기 때문에) 하나의 업데이트된 모델 -> 액터들에게 전송 
-# 이러한 논리 전개면, main들을 상위에서 관리해주는 main-manager 이런것도 필요할 듯
-# 즉, main -> tmux를 통해 여러개 띄우는 형태로 가야함 (main-manager의 역할)
-
-# gpu 여러개 달린 머신 (하나의 머신) -> gpu 장 수에 맞춰서 -> 러너 개수 할당 (main -> main-learner) / 구조 변경이 필요, 지금은 워커-러너 붙어 있는데, 떼어야 할 듯
-# 그리고, 이 한개의 러너 <-> 여러개 워커 통신을 zeromq로 관리해야 할 듯
-
-# 결국에는 트라이앵글 구조 인 듯: (1개)러너-매니저 <-> (여러)러너 <-> 워커들 / 러너-매니저 에서 총 병렬적으로 병합된, 신경망 웨이트 -> 모든 액터들에게 전송
