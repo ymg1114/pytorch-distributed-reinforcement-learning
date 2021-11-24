@@ -23,18 +23,19 @@ class Worker():
         self.zeromq_set(port)
         # self.writer = SummaryWriter(log_dir=self.args.result_dir)
 
-    def zeromq_set(self, port):
+    def zeromq_set(self, port):        
         # worker <-> manager
         context = zmq.Context()
-        self.req_socket1 = context.socket( zmq.REQ ) # send rollout-data
-        self.req_socket1.bind( f"tcp://{local}:{port}" )
+        self.pub_socket = context.socket( zmq.PUB ) 
+        self.pub_socket.bind( f"tcp://{local}:{port}" ) # publish rollout-data
 
         # worker <-> learner
         context = zmq.Context()
-        self.req_socket2 = context.socket( zmq.REQ ) # receive fresh learner model
-        self.req_socket2.connect( f"tcp://{local}:{self.args.learner_port + 1}" )
-        
-    def req_rollout_to_manager(self):
+        self.sub_socket = context.socket( zmq.SUB ) 
+        self.sub_socket.connect( f"tcp://{local}:{self.args.learner_port + 1}" ) # subscribe fresh learner model
+        self.sub_socket.setsockopt_string( zmq.SUBSCRIBE, '' )
+    
+    def pub_rollout_to_manager(self):
         rollout_data = (self.rollouts.obs[:], 
                         self.rollouts.actions[:], 
                         self.rollouts.rewards[:],
@@ -42,19 +43,20 @@ class Worker():
                         self.rollouts.masks[:],
                         self.rollouts.lstm_hidden_states[:]
                         )
-        
-        self.req_socket1.send_pyobj( rollout_data )
-        _ = self.req_socket1.recv_pyobj()
-        print( f'{self.worker_name}: Send rollout-data to manager !' )
+
+        self.pub_socket.send_pyobj( rollout_data )
+        # print( f'{self.worker_name}: Send rollout-data to manager !' )
         
     def req_model_from_learner(self):
-        self.req_socket2.send_pyobj( "REQ_MODEL" )
-        
-        model_state_dict = self.req_socket2.recv_pyobj()
-        if model_state_dict:
-            self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
-            print( f'{self.worker_name}: Received fresh model from learner !' )
-        
+        try:
+            model_state_dict = self.sub_socket.recv_pyobj(flags=zmq.NOBLOCK)
+            if model_state_dict:
+                self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
+                # print( f'{self.worker_name}: Received fresh model from learner !' )
+        except zmq.Again as e:
+            pass
+            # print("No model-weight received yet")
+
     def log_tensorboard(self):
         if self.num_epi % self.args.log_interval == 0 and self.num_epi != 0:
             self.writer.add_scalar(self.worker_name + '_epi_reward', self.epi_reward, self.num_epi)
@@ -99,6 +101,6 @@ class Worker():
                 
             num_epi += 1
 
-            self.req_rollout_to_manager()
+            self.pub_rollout_to_manager()
             self.req_model_from_learner()
             # self.log_tensorboard()

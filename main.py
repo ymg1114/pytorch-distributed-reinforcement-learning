@@ -13,10 +13,9 @@ from types import SimpleNamespace
 from agents.learner import Learner
 from agents.worker import Worker
 
-from buffers.req_manager import req_Manager
-from buffers.rep_manager import rep_Manager
+from buffers.pub_manager import pub_Manager
+from buffers.sub_manager import sub_Manager
 from buffers.learner_batch_manager import learner_batch_Manager
-from buffers.learner_update_manager import learner_update_Manager
 from threading import Thread
 from utils.utils import ParameterServer, kill_processes
 
@@ -25,26 +24,21 @@ def worker_run(args, model, worker_name, port):
     worker = Worker(args, model, worker_name, port)
     worker.collect_rolloutdata() # collect rollout-data (multi-workers)
 
-def req_manager_run(q_workers, args, *obs_shape):
-    req_m = req_Manager(args, obs_shape)
+def pub_manager_run(q_workers, args, *obs_shape):
+    req_m = pub_Manager(args, obs_shape)
     req_m.make_batch(q_workers) # make_batch & send batch-data to learner
 
-def rep_manager_run(q_workers, WORKER_PORTS):
-    rep_m = rep_Manager(WORKER_PORTS)
-    rep_m.rep_rollout_from_workers(q_workers) # received rollout-data from workers
+def sub_manager_run(q_workers, WORKER_PORTS):
+    rep_m = sub_Manager(WORKER_PORTS)
+    rep_m.sub_rollout_from_workers(q_workers) # received rollout-data from workers
 
 def learner_batch_manager_run(q_batchs, args):
     l_m = learner_batch_Manager(args)
-    l_m.rep_batch_from_manager(q_batchs) # received batch-data from manager
+    l_m.sub_batch_from_manager(q_batchs) # received batch-data from manager
 
 def run(q_batchs, args, learner_model, sub_procs):
-    learner = Learner(args, learner_model)
-    l = mp.Process( target=learner.zeromq_model_updates, args=(args, worker_model, worker_name, WORKER_PORTS[i]) ) # sub-processes
-    l.daemon = True 
-    sub_procs.append(l)
-
     [ p.start() for p in sub_procs ]
-    # learner = Learner(args, learner_model)
+    learner = Learner(args, learner_model)
     learner.learning(q_batchs)
     [ p.join() for p in sub_procs ]
 
@@ -131,11 +125,11 @@ if __name__ == '__main__':
         learner_model.share_memory()
         
         sub_procs = []
-        rep_m = mp.Process( target=rep_manager_run, args=(q_workers, WORKER_PORTS) ) # sub-processes
+        rep_m = mp.Process( target=sub_manager_run, args=(q_workers, WORKER_PORTS) ) # sub-processes
         rep_m.daemon = True 
         sub_procs.append(rep_m)
 
-        req_m = mp.Process( target=req_manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
+        req_m = mp.Process( target=pub_manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
         req_m.daemon = True 
         sub_procs.append(req_m)
         

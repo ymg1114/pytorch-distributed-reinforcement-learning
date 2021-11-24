@@ -12,8 +12,8 @@
     "frame_stack": 4,
 
     "reward_sacle": [-1, 1],
-    "unroll_length": 5,
-    "batch_size": 128,
+    "unroll_length": 10,
+    "batch_size": 256,
     "gamma": 0.99,
     "cis_hat": 1,
     "rho_hat": 1,

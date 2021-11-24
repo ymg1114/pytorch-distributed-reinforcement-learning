@@ -1,10 +1,7 @@
 import os, sys
 import torch
 import torch.nn as nn
-import time
 import zmq
-import numpy as np
-import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.optim import RMSprop
 from tensorboardX import SummaryWriter
@@ -27,29 +24,13 @@ class Learner():
     def zeromq_set(self):
         # learner <-> worker
         context = zmq.Context()
-        self.rep_socket = context.socket( zmq.REP )
-        self.rep_socket.bind( f"tcp://{local}:{self.args.learner_port + 1}" ) # send fresh learner model
+        self.pub_socket = context.socket( zmq.PUB )
+        self.pub_socket.bind( f"tcp://{local}:{self.args.learner_port + 1}" ) # publish fresh learner model
 
-        context = zmq.Context()
-        self.req_socket = context.socket( zmq.REQ ) # receive fresh learner model
-        self.req_socket.connect( f"tcp://{local}:{self.args.learner_port + 2}" )
-
-    # def rep_model_to_workers(self, model_state_dict):
-    #     _ = self.rep_socket.recv_pyobj()
+    def pub_model_to_workers(self, model_state_dict):
+        self.pub_socket.send_pyobj( model_state_dict )
+        # print( 'Send fresh model to workers !' )
         
-    #     self.rep_socket.send_pyobj( model_state_dict )
-    #     print( 'Send fresh model to workers !' )
-
-    def zeromq_model_updates(self, ):
-        while True:
-            if self.model_updates:
-                self.req_socket.send_pyobj( self.model.cpu().state_dict() )
-            else:
-                self.req_socket.send_pyobj( '' )
-                
-            _ = self.req_socket.recv_pyobj()
-            print( 'Send fresh model to workers !' )
-
     def log_tensorboard(self, loss, detached_losses, idx):
         self.writer.add_scalar('loss', float(loss.item()), idx)
         self.writer.add_scalar('original_value_loss', detached_losses["value"], idx)
@@ -59,8 +40,6 @@ class Learner():
     def learning(self, q_batchs):
         idx = 0
         while True:
-            self.model_updates = False
-            
             # Basically, mini-batch-learning (seq, batch, feat)
             obs, actions, rewards, log_probs, masks, hidden_states, cell_states = q_batchs.get()
             #print('Get batch shape: obs: {}, actions: {}, rewards: {}, log_probs: {}, masks: {}, hidden_states: {}, cell_states: {}'.format(obs.shape, actions.shape, rewards.shape, log_probs.shape, masks.shape, hidden_states.shape, cell_states.shape))
@@ -140,8 +119,7 @@ class Learner():
             print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_entropy {:.5f}".format( loss.item(), detached_losses["value"], detached_losses["policy"], detached_losses["entropy"] ))
             self.optimizer.step()
             
-            # self.rep_model_to_workers( self.model.cpu().state_dict() )
-            self.model_updates = True
+            self.pub_model_to_workers( self.model.cpu().state_dict() )
             
             # if (idx % self.args.log_interval == 0):
             #     self.log_tensorboard(loss, detached_losses, idx)

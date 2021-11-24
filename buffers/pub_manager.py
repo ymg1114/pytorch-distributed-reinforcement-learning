@@ -1,12 +1,10 @@
 import torch
-import time
 import zmq
 import numpy as np
-import torch.multiprocessing as mp
 
 local = "127.0.0.1"
 
-class req_Manager():
+class pub_Manager():
     def __init__(self, args, obs_shape):
         self.args = args
         self.obs_shape = obs_shape
@@ -18,15 +16,13 @@ class req_Manager():
     def zeromq_set(self):
         # manager <-> learner
         context = zmq.Context()
-        self.req_socket = context.socket( zmq.REQ ) # send batch-data
-        self.req_socket.bind( f"tcp://{local}:{self.args.learner_port}" )
+        self.pub_socket = context.socket( zmq.PUB ) # publish batch-data
+        self.pub_socket.bind( f"tcp://{local}:{self.args.learner_port}"  )
 
-    def req_batch_to_learner(self, batch_data):
-        self.req_socket.send_pyobj( batch_data )
+    def pub_batch_to_learner(self, batch_data):
+        self.pub_socket.send_pyobj( batch_data )
+        # print( 'Send batch-data to learner !' )
         
-        _ = self.req_socket.recv_pyobj()
-        print( 'Send batch-data to learner !' )
-            
     def reset_batch(self):
         self.workers_obs           = torch.zeros(self.args.seq_len+1, 2*self.args.batch_size, *self.obs_shape)
         # self.workers_actions       = torch.zeros(3*self.args.seq_len, 1, self.n_outputs) # one-hot
@@ -98,7 +94,7 @@ class req_Manager():
                       c_s.to(self.device)
                       )
         
-        self.req_batch_to_learner( batch_data )
+        self.pub_batch_to_learner( batch_data )
         
     def get_batch(self):
         o = self.workers_obs[:, :self.args.batch_size]    # (seq, batch, feat)
