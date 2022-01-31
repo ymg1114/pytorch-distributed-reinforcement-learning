@@ -21,7 +21,7 @@ class Learner():
         self.cis = nn.Parameter( torch.tensor(args.cis_hat, dtype=torch.float), requires_grad=False )
 
         self.zeromq_set()
-        # self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
+        self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
 
     def zeromq_set(self):
         # learner <-> manager
@@ -107,7 +107,7 @@ class Learner():
 
             # Value loss = l2 target loss -> (v_s - V_w(x_s))**2
             loss_value = (v_targets[:-1] - target_value[:-1]).pow_(2)  
-            loss_value = loss_value.sum()
+            loss_value = loss_value.mean()
 
             # Policy loss -> - rho * advantage * log_policy & entropy bonus sum(policy*log_policy)
             # We detach the advantage because we don't compute
@@ -116,11 +116,11 @@ class Learner():
             # The advantage function reduces variance
             advantage = rewards + self.args.gamma * v_targets[1:] - target_value[:-1]
             loss_policy = -rhos * target_log_probs * advantage.detach()
-            loss_policy = loss_policy.sum()
+            loss_policy = loss_policy.mean()
 
             # Adding the entropy bonus (much like A3C for instance)
             # The entropy is like a measure of the disorder
-            entropy = target_entropy.sum()
+            entropy = target_entropy.mean()
 
             # Summing all the losses together
             loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*entropy
