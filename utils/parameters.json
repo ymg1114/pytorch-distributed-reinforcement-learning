@@ -5,24 +5,24 @@
     "h": 84,
     "w": 84,
     "gray": false,
-    "hidden_size": 64,
+    "hidden_size": 32,
 
     "time_horizon": 500,
     "repeat_actions": 4,
     "frame_stack": 4,
 
     "reward_sacle": [-1, 1],
-    "unroll_length": 10,
-    "batch_size": 256,
-    "gamma": 0.99,
+    "unroll_length": 5,
+    "batch_size": 128,
+    "gamma": 0.995,
     "cis_hat": 1,
     "rho_hat": 1,
 
     "policy_loss_coef": 1,
     "value_loss_coef": 0.5,
-    "entropy_coef": 1e-5,
+    "entropy_coef": 0.0005,
 
-    "learning_rate": 1e-4,
+    "learning_rate": 0.00005,
     "clip_gradient_norm": 1,
 
     "log_save_interval": 50,
@@ -30,7 +30,6 @@
     "gpu_idx": 0,
 
     "num_worker": 30,
-    "worker_port": 5000,
-    "manager_port": 6000,
-    "learner_port": 7000
+    "worker_port": 2258,
+    "learner_port": 4228
 }

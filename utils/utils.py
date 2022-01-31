@@ -54,11 +54,10 @@ class ParameterServer():
             self.weight = weigth
             
 def kill_processes():
-    WORKER_PORTS = [ port for port in range(p.worker_port, p.worker_port+p.num_worker) ]
-    MANGER_PORTS = [ p.manager_port ]
+    WORKER_PORTS = [ p.worker_port ]
     LEARNER_PORTS = [ p.learner_port, p.learner_port+1  ]
     
-    for port in WORKER_PORTS+MANGER_PORTS+LEARNER_PORTS:
+    for port in WORKER_PORTS+LEARNER_PORTS:
         os.system(f'taskkill /f /pid {port}')
         
     parent = psutil.Process( os.getppid() )

@@ -1,8 +1,10 @@
 import os, sys
+import zmq
 import torch
 import torch.nn as nn
-import zmq
 import torch.nn.functional as F
+
+from threading import Thread
 from torch.optim import RMSprop
 from tensorboardX import SummaryWriter
 
@@ -22,10 +24,27 @@ class Learner():
         # self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
 
     def zeromq_set(self):
+        # learner <-> manager
+        context = zmq.Context()
+        self.sub_socket = context.socket( zmq.SUB ) # subscribe batch-data
+        self.sub_socket.bind( f"tcp://{local}:{self.args.learner_port}" )
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
+        
         # learner <-> worker
         context = zmq.Context()
         self.pub_socket = context.socket( zmq.PUB )
-        self.pub_socket.bind( f"tcp://{local}:{self.args.learner_port + 1}" ) # publish fresh learner model
+        self.pub_socket.bind( f"tcp://{local}:{self.args.learner_port + 1}" ) # publish fresh learner-model
+
+    def sub_batch_from_manager(self, q_batchs):
+        self.l_t = Thread( target=self.receive_batch, args=(q_batchs,) )
+        self.l_t.daemon = True 
+        self.l_t.start()
+
+    def receive_batch(self, q_batchs):
+        while True:
+            batch = self.sub_socket.recv_pyobj()
+            q_batchs.put( batch )  
+            # print( 'Received batch-data from manager !' )
 
     def pub_model_to_workers(self, model_state_dict):
         self.pub_socket.send_pyobj( model_state_dict )
@@ -49,13 +68,13 @@ class Learner():
                                                                                       lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
                                                                                       masks,       # (seq+1, batch, 1)
                                                                                       actions )    # (seq+1, batch, 1)
-            assert rewards.size()[0] == self.args.seq_len+1
+            # assert rewards.size()[0] == self.args.seq_len
 
             # Copy on the same device at the input tensor
             vtrace = torch.zeros( target_value.size() ).to(self.args.device)
 
             # Computing importance sampling for truncation levels
-            importance_sampling = torch.exp( target_log_probs[:-1] - log_probs[:-1] )  # (seq, batch, 1)
+            importance_sampling = torch.exp( target_log_probs - log_probs )  # (seq, batch, 1)
             rho                 = torch.min( self.rho, importance_sampling ) # (seq, batch, 1)
             cis                 = torch.min( self.cis, importance_sampling ) # (seq, batch, 1)
 
@@ -65,7 +84,7 @@ class Learner():
             vtrace[-1] = target_value[-1]  # Bootstrapping
 
             # Computing the deltas
-            delta = rho * ( rewards[:-1] + self.args.gamma * target_value[1:] - target_value[:-1] )
+            delta = rho * ( rewards + self.args.gamma * target_value[1:] - target_value[:-1] )
 
             # Pytorch has no funtion such as tf.scan or theano.scan
             # This disgusting is compulsory for jit as reverse is not supported
@@ -95,13 +114,13 @@ class Learner():
             # A = reward + gamma * V_{t+1} - V_t
             # L = - log_prob * A
             # The advantage function reduces variance
-            advantage = rewards[:-1] + self.args.gamma * v_targets[1:] - target_value[:-1]
-            loss_policy = -rhos * target_log_probs[:-1] * advantage.detach()
+            advantage = rewards + self.args.gamma * v_targets[1:] - target_value[:-1]
+            loss_policy = -rhos * target_log_probs * advantage.detach()
             loss_policy = loss_policy.sum()
 
             # Adding the entropy bonus (much like A3C for instance)
             # The entropy is like a measure of the disorder
-            entropy = target_entropy[:-1].sum()
+            entropy = target_entropy.sum()
 
             # Summing all the losses together
             loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*entropy
@@ -121,8 +140,8 @@ class Learner():
             
             self.pub_model_to_workers( self.model.cpu().state_dict() )
             
-            # if (idx % self.args.log_interval == 0):
-            #     self.log_tensorboard(loss, detached_losses, idx)
+            if (idx % self.args.log_interval == 0):
+                self.log_tensorboard(loss, detached_losses, idx)
 
             if (idx % self.args.save_interval == 0):
                 torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{idx}.pt"))
