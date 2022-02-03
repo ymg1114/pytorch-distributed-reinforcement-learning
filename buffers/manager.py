@@ -2,6 +2,7 @@ import torch
 import zmq
 import numpy as np
 
+from utils.utils import encode, decode
 from threading import Thread
 
 local = "127.0.0.1"
@@ -12,24 +13,26 @@ class Manager():
         self.obs_shape = obs_shape
         self.device = torch.device('cpu')
         
+        self.stat_list = []
+        self.stat_log_len = 20
         self.zeromq_set( worker_port )
         self.reset_batch()
  
     def zeromq_set(self, worker_port):
-        # manager <-> worker 
         context = zmq.Context()
-        self.sub_socket = context.socket( zmq.SUB ) # subscribe rollout-data
+        
+        # manager <-> worker 
+        self.sub_socket = context.socket( zmq.SUB ) # subscribe rollout-data, stat-data
         self.sub_socket.bind( f"tcp://{local}:{worker_port}" )
         self.sub_socket.setsockopt( zmq.SUBSCRIBE, b'' )
 
         # manager <-> learner
-        context = zmq.Context()
-        self.pub_socket = context.socket( zmq.PUB ) # publish batch-data
+        self.pub_socket = context.socket( zmq.PUB ) # publish batch-data, stat-data
         self.pub_socket.connect( f"tcp://{local}:{self.args.learner_port}"  )
 
     def pub_batch_to_learner(self, batch):
-        self.pub_socket.send_pyobj( batch )
-        # print( 'Send batch-data to learner !' )
+        _filter, _data = encode('batch', batch)
+        self.pub_socket.send_multipart( [ _filter, _data ] )
 
     def reset_batch(self):
         self.obs_batch          = torch.zeros(self.args.seq_len+1, self.args.batch_size, *self.obs_shape)
@@ -50,17 +53,39 @@ class Manager():
         else:
             return False
         
-    def sub_rollout_from_workers(self, q_workers):
-        self.m_t = Thread( target=self.receive_rollout, args=(q_workers,) )
+    def sub_data_from_workers(self, q_workers):
+        self.m_t = Thread( target=self.receive_data, args=(q_workers,) )
         self.m_t.daemon = True 
         self.m_t.start()
     
-    def receive_rollout(self, q_workers):
+    def receive_data(self, q_workers):
         while True:
-            rollout = self.sub_socket.recv_pyobj()
-            q_workers.put( rollout )
-            # print( 'Received rollout-data from workers !' )
+            filter, data = self.sub_socket.recv_multipart()
+            filter, data = decode(filter, data)
+             
+            if filter == 'rollout':
+                q_workers.put( data )
+                
+            elif filter == 'stat':
+                self.stat_list.append( data )
+                if len( self.stat_list ) >= self.stat_log_len:
+                    mean_stat = self.process_stat()
+                    _filter, _data = encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})
+                    self.pub_socket.send_multipart( [ _filter, _data ] )
+                    self.stat_list = []
+    
+    def process_stat(self):
+        mean_stat = {}
+        for stat_dict in self.stat_list:
+            for k, v in stat_dict.items():
+                if not k in mean_stat:
+                    mean_stat[ k ] = [ v ]
+                else:
+                    mean_stat[ k ].append( v )
                     
+        mean_stat = { k: np.mean(v) for k, v in mean_stat.items() }
+        return mean_stat
+    
     def make_batch(self, q_workers):
         while True:
             if self.check_q( q_workers ):

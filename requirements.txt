@@ -4,6 +4,7 @@ gym[atari]
 ale-py
 atari-py
 numpy
+pickle
 pathlib
 opencv-python
 torch

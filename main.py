@@ -24,14 +24,14 @@ def worker_run(args, model, worker_name, port, *obs_shape):
 
 def manager_run(q_workers, args, *obs_shape):
     manager = Manager(args, args.worker_port, obs_shape)
-    manager.sub_rollout_from_workers(q_workers) # received rollout-data from workers
-    manager.make_batch(q_workers)               # make_batch & send batch-data to learner
+    manager.sub_data_from_workers(q_workers) # received rollout-data/stat from workers
+    manager.make_batch(q_workers)            # make_batch & send batch-data to learner
                                 
 def run(q_batchs, args, learner_model, sub_procs):
     [ p.start() for p in sub_procs ]
     learner = Learner(args, learner_model)
-    learner.sub_batch_from_manager(q_batchs) # main-process (sub-thread)
-    learner.learning(q_batchs)               # main-process
+    learner.sub_data_from_manager(q_batchs) # main-process (sub-thread)
+    learner.learning(q_batchs)              # main-process
     [ p.join() for p in sub_procs ]
 
 

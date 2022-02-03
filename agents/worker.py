@@ -5,6 +5,8 @@ import zmq
 import gym
 import torch
 import numpy as np
+
+from utils.utils import encode, decode
 from buffers.storage import WorkerRolloutStorage
 from utils.utils import obs_preprocess, ParameterServer
 from tensorboardX import SummaryWriter
@@ -21,16 +23,15 @@ class Worker():
         self.worker_name = worker_name
     
         self.zeromq_set( port )
-        # self.writer = SummaryWriter(log_dir=self.args.result_dir)
-
-    def zeromq_set(self, port):        
+        
+    def zeromq_set(self, port):  
+        context = zmq.Context()  
+            
         # worker <-> manager
-        context = zmq.Context()
         self.pub_socket = context.socket( zmq.PUB ) 
-        self.pub_socket.connect( f"tcp://{local}:{port}" ) # publish rollout-data
+        self.pub_socket.connect( f"tcp://{local}:{port}" ) # publish rollout-data, stat-data
 
         # worker <-> learner
-        context = zmq.Context()
         self.sub_socket = context.socket( zmq.SUB ) 
         self.sub_socket.connect( f"tcp://{local}:{self.args.learner_port + 1}" ) # subscribe fresh learner-model
         self.sub_socket.setsockopt( zmq.SUBSCRIBE, b'' )
@@ -44,8 +45,9 @@ class Worker():
                         self.rollouts.hidden_state_roll,
                         self.rollouts.cell_state_roll
                         )
-        self.pub_socket.send_pyobj( rollout_data )
-        # print( f'{self.worker_name}: Send rollout-data to manager !' )
+        
+        filter, data = encode('rollout',  rollout_data)
+        self.pub_socket.send_multipart( [ filter, data ] )
         
         self.buffer_reset() # flush worker-buffer
         
@@ -59,11 +61,13 @@ class Worker():
             # print("No model-weight received yet")
             pass
         
-    def log_tensorboard(self):
-        if self.num_epi % self.args.log_interval == 0 and self.num_epi != 0:
-            self.writer.add_scalar(self.worker_name + '_epi_reward', self.epi_reward, self.num_epi)
-        self.epi_reward = 0
-
+    def pub_stat_to_manager(self):
+        stat = {}
+        stat.update( {'epi_reward': self.epi_reward} )
+        
+        filter, data = encode('stat', stat)
+        self.pub_socket.send_multipart( [ filter, data ] )
+        
     def buffer_reset(self):
         self.rollouts.reset_list()       
         self.rollouts.reset_rolls() 
@@ -73,8 +77,8 @@ class Worker():
         
         # init
         done = False 
-        self.num_epi, self.epi_reward = 0, 0
-        lstm_hidden_state = ( torch.zeros( (1, 1, self.args.hidden_size) ), torch.zeros( (1, 1, self.args.hidden_size) ) ) # (h_s, c_s) / (seq, batch, hidden)
+        self.num_epi = 0
+        
         env = gym.make(self.args.env)
         
         while True:
@@ -82,7 +86,9 @@ class Worker():
             
             obs = env.reset()
             obs = obs_preprocess(obs, self.args.need_conv)
-                        
+            lstm_hidden_state = ( torch.zeros( (1, 1, self.args.hidden_size) ), torch.zeros( (1, 1, self.args.hidden_size) ) ) # (h_s, c_s) / (seq, batch, hidden)
+            self.epi_reward = 0
+            
             # init worker-buffer
             self.buffer_reset()    
           
@@ -102,7 +108,7 @@ class Worker():
                                      log_prob.view(1, -1),                       # (1, 1)               
                                      mask,                                       # (1, 1)
                                      lstm_hidden_state)                          # (h_s, c_s) / (seq, batch, hidden)
-                obs = next_obs                                   # ( 1, c, h, w )
+                obs = next_obs                                   # (1, c, h, w) or (1, D)
                 lstm_hidden_state = next_lstm_hidden_state       # ( (1, 1, d_h), (1, 1, d_c) )
                 
                 if self.rollouts.size >= self.args.seq_len or done:
@@ -110,7 +116,8 @@ class Worker():
                     self.pub_rollout_to_manager()
                     
                     if done:
+                        self.pub_stat_to_manager()
+                        self.epi_reward = 0
+                        self.num_epi += 1
                         break
-                
-            self.num_epi += 1
-            # self.log_tensorboard()
+            

@@ -3,6 +3,7 @@ import cv2
 import json
 import torch
 import psutil
+import pickle
 import torchvision.transforms as T
 
 from sys import platform
@@ -77,3 +78,9 @@ def kill_processes():
             
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess): #예외처리 
             pass
+        
+def encode(filter, data):
+    return pickle.dumps(filter), pickle.dumps(data)
+
+def decode(filter, data):
+    return pickle.loads(filter), pickle.loads(data)

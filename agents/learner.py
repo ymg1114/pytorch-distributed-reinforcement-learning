@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.utils import encode, decode
 from threading import Thread
 from torch.optim import RMSprop
 from tensorboardX import SummaryWriter
@@ -21,43 +22,59 @@ class Learner():
         self.cis = nn.Parameter( torch.tensor(args.cis_hat, dtype=torch.float), requires_grad=False )
 
         self.zeromq_set()
+        self.mean_cal_interval = 30
         self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
 
     def zeromq_set(self):
-        # learner <-> manager
         context = zmq.Context()
-        self.sub_socket = context.socket( zmq.SUB ) # subscribe batch-data
+        
+        # learner <-> manager, worker
+        self.sub_socket = context.socket( zmq.SUB ) # subscribe batch-data, stat-data
         self.sub_socket.bind( f"tcp://{local}:{self.args.learner_port}" )
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
         
         # learner <-> worker
-        context = zmq.Context()
         self.pub_socket = context.socket( zmq.PUB )
         self.pub_socket.bind( f"tcp://{local}:{self.args.learner_port + 1}" ) # publish fresh learner-model
 
-    def sub_batch_from_manager(self, q_batchs):
-        self.l_t = Thread( target=self.receive_batch, args=(q_batchs,) )
+    def sub_data_from_manager(self, q_batchs):
+        self.l_t = Thread( target=self.receive_data, args=(q_batchs,) )
         self.l_t.daemon = True 
         self.l_t.start()
 
-    def receive_batch(self, q_batchs):
+    def receive_data(self, q_batchs):
         while True:
-            batch = self.sub_socket.recv_pyobj()
-            q_batchs.put( batch )  
-            # print( 'Received batch-data from manager !' )
+            filter, data = self.sub_socket.recv_multipart()
+            filter, data = decode(filter, data)
+            
+            if filter == 'batch':
+                q_batchs.put( data )  
+                
+            elif filter == 'stat':
+                self.log_stat_tensorboard( data )
 
     def pub_model_to_workers(self, model_state_dict):
         self.pub_socket.send_pyobj( model_state_dict )
-        # print( 'Send fresh model to workers !' )
+
+    def log_stat_tensorboard(self, data):
+        len       = data['log_len']
+        data_dict = data['mean_stat']
         
-    def log_tensorboard(self, loss, detached_losses, idx):
-        self.writer.add_scalar('loss', float(loss.item()), idx)
-        self.writer.add_scalar('original_value_loss', detached_losses["value"], idx)
-        self.writer.add_scalar('original_policy_loss', detached_losses["policy"], idx)
-        self.writer.add_scalar('original_entropy', detached_losses["entropy"], idx)
+        for k, v in data_dict.items():
+            tag = f'worker/{len}-game-mean-stat-of-[{k}]'
+            x = self.idx
+            y = v
+            self.writer.add_scalar(tag, y, x)
+            # print(f'tag: {tag}, y: {y}, x: {x}')
+            
+    def log_loss_tensorboard(self, loss, detached_losses):
+        self.writer.add_scalar('loss', float(loss.item()), self.idx)
+        self.writer.add_scalar('original_value_loss', detached_losses["value"], self.idx)
+        self.writer.add_scalar('original_policy_loss', detached_losses["policy"], self.idx)
+        self.writer.add_scalar('original_entropy', detached_losses["entropy"], self.idx)
         
     def learning(self, q_batchs):
-        idx = 0
+        self.idx = 0
         while True:
             # Basically, mini-batch-learning (seq, batch, feat)
             obs, actions, rewards, log_probs, masks, hidden_states, cell_states = q_batchs.get()
@@ -140,10 +157,10 @@ class Learner():
             
             self.pub_model_to_workers( self.model.cpu().state_dict() )
             
-            if (idx % self.args.log_interval == 0):
-                self.log_tensorboard(loss, detached_losses, idx)
+            if (self.idx % self.args.log_interval == 0):
+                self.log_loss_tensorboard(loss, detached_losses)
 
-            if (idx % self.args.save_interval == 0):
-                torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{idx}.pt"))
+            if (self.idx % self.args.save_interval == 0):
+                torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"))
             
-            idx+= 1
+            self.idx+= 1

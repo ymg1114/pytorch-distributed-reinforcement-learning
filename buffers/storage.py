@@ -5,7 +5,7 @@ class WorkerRolloutStorage():
         self.args = args
         self.obs_shape = obs_shape
         self.device = torch.device('cpu')
-        self.reset_list()       # init   
+        self.reset_list()  # init   
         self.reset_rolls() # init
         
     def reset_list(self):
