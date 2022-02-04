@@ -240,37 +240,36 @@ class ConvLSTM(nn.Module):
 
         return action.detach(), lstm_hxs
 
-    def forward(self, obs, lstm_hxs, mask, behaviour_actions):
+    def forward(self, obs, lstm_hxs, behaviour_actions):
         """
         obs : (seq+1, batch, d)
         lstm_hxs : ( (1, batch, hidden), (1, batch, hidden) )
-        mask : (seq, batch, 1)
         behaviour_actions : (seq, batch, 1) / not one-hot, but action index
         """
         # Check the dimentions
         seq, batch, *d = obs.size() 
-
-        obs = obs.contiguous().view(seq * batch, *d)
+        seq -= 1
+        
+        obs = obs.contiguous().view( (seq+1) * batch, *d )
         x = self.body.forward(obs)
-        x = x.view(seq, batch, self.hidden_size) # (seq, batch, hidden_size)
+        x = x.view( (seq+1), batch, self.hidden_size ) # (seq+1, batch, hidden_size)
 
         x, lstm_hxs = self.lstm(x, lstm_hxs)
         lstm_hxs[0].detach_()
         lstm_hxs[1].detach_()
         
-        # x = x.view(seq * batch, self.hidden_size)              # (seq*batch, hidden_size)
-        behaviour_actions = behaviour_actions.contiguous().view( (seq-1)*batch )  # Shape for dist
-                                                                                  # (seq*batch, ) / action index
-        target_value = self.value(x) # ( (seq+1), batch, 1 )
-        logits = self.logits(x)      # ( (seq+1), batch, num_actions )
-        logits = logits[:-1]         # current-obs -> current-policy        
-        logits = logits.view( (seq-1) * batch, -1 )
+        behaviour_actions = behaviour_actions.contiguous().view( seq*batch )  # Shape for dist
+                                                                              # (seq*batch, ) / action index
+        target_value  = self.value(x)  # ( (seq+1), batch, 1 )
+        logits = self.logits(x)        # ( (seq+1), batch, num_actions ) 
+        logits = logits[:-1]           # ( seq, batch, num_actions ) 
+        logits = logits.view( seq*batch, -1 )
         
-        target_log_probs, target_entropy = self._forward_dist(logits, behaviour_actions) # current-obs -> current-policy
+        target_log_probs, target_entropy = self._forward_dist(logits, behaviour_actions) # current
 
-        target_log_probs = target_log_probs.view( (seq-1), batch, 1 )
-        target_entropy = target_entropy.view( (seq-1), batch, 1 )
-        target_value = target_value.view( seq, batch, 1 )
+        target_log_probs = target_log_probs.view( seq, batch, 1 )
+        target_entropy = target_entropy.view( seq, batch, 1 )
+        target_value = target_value.view( (seq+1), batch, 1 )
 
         return target_log_probs, target_entropy, target_value, lstm_hxs
 

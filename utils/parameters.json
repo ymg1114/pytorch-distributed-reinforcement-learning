@@ -1,18 +1,18 @@
 
 {
-    "target_env": "CartPole-v1",
+    "target_env": "LunarLander-v2",
     "need_conv": false,
     "h": 84,
     "w": 84,
     "gray": false,
-    "hidden_size": 32,
+    "hidden_size": 64,
 
     "time_horizon": 500,
     "repeat_actions": 4,
     "frame_stack": 4,
 
     "reward_sacle": [-1, 1],
-    "unroll_length": 5,
+    "unroll_length": 10,
     "batch_size": 64,
     "gamma": 0.995,
     "cis_hat": 1,
@@ -29,7 +29,7 @@
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker": 10,
-    "worker_port": 2259,
-    "learner_port": 4229
+    "num_worker": 20,
+    "worker_port": 2249,
+    "learner_port": 4249
 }

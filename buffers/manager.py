@@ -40,7 +40,7 @@ class Manager():
         self.action_batch       = torch.zeros(self.args.seq_len, self.args.batch_size, 1) # not one-hot, but action index (scalar)
         self.reward_batch       = torch.zeros(self.args.seq_len, self.args.batch_size, 1) # scalar
         self.log_prob_batch     = torch.zeros(self.args.seq_len, self.args.batch_size, 1) # scalar
-        self.mask_batch         = torch.zeros(self.args.seq_len, self.args.batch_size, 1) # scalar
+        self.done_batch         = torch.zeros(self.args.seq_len, self.args.batch_size, 1) # scalar
     
         self.hidden_state_batch = torch.zeros(1, self.args.batch_size, self.args.hidden_size)
         self.cell_state_batch   = torch.zeros(1, self.args.batch_size, self.args.hidden_size)
@@ -96,7 +96,7 @@ class Manager():
                     action       = rollout[1]
                     reward       = rollout[2]
                     log_prob     = rollout[3]
-                    mask         = rollout[4]
+                    done         = rollout[4]
                     hidden_state = rollout[5]
                     cell_state   = rollout[6]
                     
@@ -104,7 +104,7 @@ class Manager():
                     self.action_batch[:, self.batch_num] = action
                     self.reward_batch[:, self.batch_num] = reward 
                     self.log_prob_batch[:, self.batch_num] = log_prob
-                    self.mask_batch[:, self.batch_num] = mask
+                    self.done_batch[:, self.batch_num] = done
                     self.hidden_state_batch[:, self.batch_num] = hidden_state
                     self.cell_state_batch[:, self.batch_num] = cell_state
                     
@@ -117,13 +117,13 @@ class Manager():
         #     self.m_t.join()
         
     def produce_batch(self):
-        o, a, r, log_p, mask, h_s, c_s = self.get_batch()
+        o, a, r, log_p, done, h_s, c_s = self.get_batch()
 
         batch = (o.to(self.device), 
                  a.to(self.device), 
                  r.to(self.device), 
                  log_p.to(self.device), 
-                 mask.to(self.device), 
+                 done.to(self.device), 
                  h_s.to(self.device), 
                  c_s.to(self.device)
                 )
@@ -135,9 +135,9 @@ class Manager():
         a = self.action_batch[:, :self.args.batch_size]
         r = self.reward_batch[:, :self.args.batch_size]
         log_p = self.log_prob_batch[:, :self.args.batch_size]
-        mask = self.mask_batch[:, :self.args.batch_size]
+        done = self.done_batch[:, :self.args.batch_size]
         
         h_s = self.hidden_state_batch[:, :self.args.batch_size]
         c_s = self.cell_state_batch[:, :self.args.batch_size]
         
-        return o, a, r, log_p, mask, h_s, c_s
+        return o, a, r, log_p, done, h_s, c_s

@@ -95,6 +95,7 @@ if __name__ == '__main__':
 
         # only to get observation, action space
         env = gym.make(args.env)
+        env.seed(0)
         n_outputs = env.action_space.n
         print('Action Space: ', n_outputs)
         print('Observation Space: ', env.observation_space.shape)

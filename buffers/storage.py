@@ -14,17 +14,17 @@ class WorkerRolloutStorage():
         self.rewards = []
         self.next_obs = None
         self.log_probs = []
-        self.masks = []
+        self.dones = []
         self.lstm_hidden_states = []
         self.size = 0
         
-    def insert(self, obs, action, reward, next_obs, log_prob, mask, lstm_hidden_state):
+    def insert(self, obs, action, reward, next_obs, log_prob, done, lstm_hidden_state):
         self.obs.append( obs.to(self.device) )               # (1, c, h, w) or (1, D)
         self.actions.append( action.to(self.device) )        # (1, 1) / not one-hot, but action index
         self.rewards.append( reward.to(self.device) )        # (1, 1)
         self.next_obs = next_obs                             # (1, c, h, w) or (1, D)
         self.log_probs.append( log_prob.to(self.device) )    # (1, 1)
-        self.masks.append( mask.to(self.device) )            # (1, 1)
+        self.dones.append( done.to(self.device) )            # (1, 1)
         
         lstm_hidden_state = ( lstm_hidden_state[0].to(self.device), lstm_hidden_state[1].to(self.device) ) 
         self.lstm_hidden_states.append( lstm_hidden_state )  # ( (1, 1, d_h), (1, 1, d_c) )
@@ -37,7 +37,7 @@ class WorkerRolloutStorage():
         self.action_roll       = torch.zeros(self.args.seq_len, 1) # not one-hot, but action index (scalar)
         self.reward_roll       = torch.zeros(self.args.seq_len, 1) # scalar
         self.log_prob_roll     = torch.zeros(self.args.seq_len, 1) # scalar
-        self.mask_roll         = torch.zeros(self.args.seq_len, 1) # scalar
+        self.done_roll         = torch.zeros(self.args.seq_len, 1) # scalar
     
         self.hidden_state_roll = torch.zeros(1, self.args.hidden_size)
         self.cell_state_roll   = torch.zeros(1, self.args.hidden_size)
@@ -48,7 +48,7 @@ class WorkerRolloutStorage():
             self.action_roll[:] = torch.cat( self.actions, dim=0 )
             self.reward_roll[:] = torch.cat( self.rewards, dim=0 )
             self.log_prob_roll[:] = torch.cat( self.log_probs, dim=0 )
-            self.mask_roll[:] = torch.cat( self.masks, dim=0 )
+            self.done_roll[:] = torch.cat( self.dones, dim=0 )
         
         else: # done true
             diff = self.args.seq_len - self.size
@@ -57,7 +57,7 @@ class WorkerRolloutStorage():
             self.action_roll[:] = torch.cat( self.actions + [ self.actions[-1] ] * (diff), dim=0 )
             self.reward_roll[:] = torch.cat( self.rewards + [ self.rewards[-1] ] * (diff), dim=0 )
             self.log_prob_roll[:] = torch.cat( self.log_probs + [ self.log_probs[-1] ] * (diff), dim=0 )
-            self.mask_roll[:] = torch.cat( self.masks + [ self.masks[-1] ] * (diff), dim=0 )
+            self.done_roll[:] = torch.cat( self.dones + [ self.dones[-1] ] * (diff), dim=0 )
 
         lstm_states = self.lstm_hidden_states[0] # need only initial
         self.hidden_state_roll[:] = lstm_states[0] # hidden

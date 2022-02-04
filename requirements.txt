@@ -1,6 +1,8 @@
 zmq
+blosc2
 gym == 0.19.0
 gym[atari]
+Box2D
 ale-py
 atari-py
 numpy

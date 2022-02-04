@@ -41,7 +41,7 @@ class Worker():
                         self.rollouts.action_roll, 
                         self.rollouts.reward_roll,
                         self.rollouts.log_prob_roll, 
-                        self.rollouts.mask_roll,
+                        self.rollouts.done_roll,
                         self.rollouts.hidden_state_roll,
                         self.rollouts.cell_state_roll
                         )
@@ -74,11 +74,8 @@ class Worker():
 
     def collect_rolloutdata(self):
         print( 'Build Environment for {}'.format(self.worker_name) )
-        
-        # init
-        done = False 
+    
         self.num_epi = 0
-        
         env = gym.make(self.args.env)
         
         while True:
@@ -99,14 +96,14 @@ class Worker():
                 
                 self.epi_reward += reward
                 reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
-                mask = torch.FloatTensor( [ [0.0] if done else [1.0] ] )
+                _done = torch.FloatTensor( [ [1.0] if done else [0.0] ] )
 
                 self.rollouts.insert(obs,                                        # (1, c, h, w) or (1, D)
                                      action.view(1, -1),                         # (1, 1) / not one-hot, but action index
                                      torch.from_numpy( np.array( [[reward]] ) ), # (1, 1)
                                      next_obs,                                   # (1, c, h, w) or (1, D)
                                      log_prob.view(1, -1),                       # (1, 1)               
-                                     mask,                                       # (1, 1)
+                                     _done,                                      # (1, 1)
                                      lstm_hidden_state)                          # (h_s, c_s) / (seq, batch, hidden)
                 obs = next_obs                                   # (1, c, h, w) or (1, D)
                 lstm_hidden_state = next_lstm_hidden_state       # ( (1, 1, d_h), (1, 1, d_c) )
