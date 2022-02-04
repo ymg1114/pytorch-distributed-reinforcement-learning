@@ -2,6 +2,7 @@ import os, sys
 import zmq
 import torch
 import pickle
+import time
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -53,7 +54,9 @@ class Learner():
                 
             elif filter == 'stat':
                 self.log_stat_tensorboard( data )
-
+                
+            time.sleep(0.001)
+            
     def pub_model_to_workers(self, model_state_dict):
         self.pub_socket.send_pyobj( model_state_dict )
 
@@ -174,3 +177,5 @@ class Learner():
                 torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"))
             
             self.idx+= 1
+            
+            time.sleep(0.001)

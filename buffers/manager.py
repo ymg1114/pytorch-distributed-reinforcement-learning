@@ -1,5 +1,6 @@
 import torch
 import zmq
+import time
 import numpy as np
 
 from utils.utils import encode, decode
@@ -73,7 +74,9 @@ class Manager():
                     _filter, _data = encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})
                     self.pub_socket.send_multipart( [ _filter, _data ] )
                     self.stat_list = []
-    
+                    
+            time.sleep(0.001)
+            
     def process_stat(self):
         mean_stat = {}
         for stat_dict in self.stat_list:
@@ -113,6 +116,8 @@ class Manager():
                 self.produce_batch()
                 self.reset_batch()
                 
+            time.sleep(0.001)
+            
         # if hasattr(self, "m_t") and self.m_t is not None:
         #     self.m_t.join()
         

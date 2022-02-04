@@ -117,4 +117,6 @@ class Worker():
                         self.epi_reward = 0
                         self.num_epi += 1
                         break
+                    
+                time.sleep(0.001)
             
