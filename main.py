@@ -59,6 +59,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--batch-size', type=int, default=p.batch_size)
     parser.add_argument('--gamma', type=float, default=p.gamma)
+    parser.add_argument('--lmbda', type=float, default=p.lmbda)
+    parser.add_argument('--eps-clip', type=float, default=p.eps_clip)
     
     parser.add_argument('--time-horizon', type=int, default=p.time_horizon)
     
@@ -72,7 +74,7 @@ if __name__ == '__main__':
     parser.add_argument('--max-grad-norm', type=float, default=p.clip_gradient_norm)
     parser.add_argument('--log-interval', type=int, default=p.log_save_interval)
     parser.add_argument('--save-interval', type=int, default=p.model_save_interval)
-    parser.add_argument('--reward-clip', type=list, default=p.reward_sacle)
+    parser.add_argument('--reward-scale', type=list, default=p.reward_scale)
     
     parser.add_argument('--num-worker', type=int, default=p.num_worker)
     

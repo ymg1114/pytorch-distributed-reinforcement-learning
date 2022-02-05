@@ -11,10 +11,12 @@
     "repeat_actions": 4,
     "frame_stack": 4,
 
-    "reward_sacle": [-1, 1],
+    "reward_scale": 0.01,
     "unroll_length": 10,
     "batch_size": 64,
-    "gamma": 0.995,
+    "gamma": 0.99,
+    "lmbda": 0.95,
+    "eps_clip": 0.1,
     "cis_hat": 1,
     "rho_hat": 1,
 
@@ -30,6 +32,6 @@
     "gpu_idx": 0,
 
     "num_worker": 30,
-    "worker_port": 2229,
-    "learner_port": 4229
+    "worker_port": 2226,
+    "learner_port": 4226
 }

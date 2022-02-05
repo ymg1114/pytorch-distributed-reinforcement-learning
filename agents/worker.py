@@ -95,16 +95,16 @@ class Worker():
                 next_obs = obs_preprocess(next_obs, self.args.need_conv)
                 
                 self.epi_reward += reward
-                reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
+                # reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
                 _done = torch.FloatTensor( [ [1.0] if done else [0.0] ] )
 
-                self.rollouts.insert(obs,                                        # (1, c, h, w) or (1, D)
-                                     action.view(1, -1),                         # (1, 1) / not one-hot, but action index
-                                     torch.from_numpy( np.array( [[reward]] ) ), # (1, 1)
-                                     next_obs,                                   # (1, c, h, w) or (1, D)
-                                     log_prob.view(1, -1),                       # (1, 1)               
-                                     _done,                                      # (1, 1)
-                                     lstm_hidden_state)                          # (h_s, c_s) / (seq, batch, hidden)
+                self.rollouts.insert(obs,                                                                 # (1, c, h, w) or (1, D)
+                                     action.view(1, -1),                                                  # (1, 1) / not one-hot, but action index
+                                     torch.from_numpy( np.array( [[ reward*self.args.reward_scale ]] ) ), # (1, 1)
+                                     next_obs,                   # (1, c, h, w) or (1, D)
+                                     log_prob.view(1, -1),       # (1, 1)               
+                                     _done,                      # (1, 1)
+                                     lstm_hidden_state)          # (h_s, c_s) / (seq, batch, hidden)
                 obs = next_obs                                   # (1, c, h, w) or (1, D)
                 lstm_hidden_state = next_lstm_hidden_state       # ( (1, 1, d_h), (1, 1, d_c) )
                 
