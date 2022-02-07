@@ -7,6 +7,8 @@ import pickle
 import blosc2
 import torchvision.transforms as T
 
+from psutil import process_iter
+from signal import SIGTERM # or SIGKILL
 from sys import platform
 from numpy import dtype
 from types import SimpleNamespace
@@ -80,22 +82,29 @@ class ParameterServer():
 #         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess): #예외처리 
 #             pass
         
-        
 def kill_processes():
-    # WORKER_PORTS = [ p.worker_port ]
-    # LEARNER_PORTS = [ p.learner_port, p.learner_port+1  ]
-
-    # for port in WORKER_PORTS+LEARNER_PORTS:
-    #     os.system(f'taskkill /f /pid {port}')
-
+    WORKER_PORTS = [ p.worker_port ]
+    LEARNER_PORTS = [ p.learner_port, p.learner_port+1  ]
+    
+    for proc in process_iter():
+        for conns in proc.connections(kind='inet'):
+            for port in WORKER_PORTS+LEARNER_PORTS:
+                if conns.laddr.port == port:
+                    try:
+                        proc.send_signal(SIGTERM) # or SIGKILL
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess): #예외처리 
+                        pass
+                    
     parent = psutil.Process( os.getppid() )
     for child in parent.children(recursive=True):  # or parent.children() for recursive=False
         child.kill()
-    parent.kill()
-        
+    parent.kill()    
         
 def encode(filter, data):
     return blosc2.compress2( pickle.dumps(filter) ), blosc2.compress2( pickle.dumps(data) )
 
 def decode(filter, data):
     return pickle.loads( blosc2.decompress2(filter) ), pickle.loads( blosc2.decompress2(data) )
+
+if __name__ == "__main__":
+    kill_processes()

@@ -47,10 +47,9 @@ class Worker():
                         )
         
         filter, data = encode('rollout',  rollout_data)
-        self.pub_socket.send_multipart( [ filter, data ] )
+        self.pub_socket.send_multipart( [ filter, data ] ) 
         
-        self.buffer_reset() # flush worker-buffer
-        
+    # NO-BLOCK
     def req_model_from_learner(self):
         try:
             model_state_dict = self.sub_socket.recv_pyobj(flags=zmq.NOBLOCK)
@@ -60,6 +59,12 @@ class Worker():
         except zmq.Again as e:
             # print("No model-weight received yet")
             pass
+        
+    # # BLOCK
+    # def req_model_from_learner(self):
+    #     model_state_dict = self.sub_socket.recv_pyobj()
+    #     if model_state_dict:
+    #         self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
         
     def pub_stat_to_manager(self):
         stat = {}
@@ -71,16 +76,15 @@ class Worker():
     def buffer_reset(self):
         self.rollouts.reset_list()       
         self.rollouts.reset_rolls() 
-
+        self.rollouts.size = 0
+        
     def collect_rolloutdata(self):
         print( 'Build Environment for {}'.format(self.worker_name) )
     
         self.num_epi = 0
         env = gym.make(self.args.env)
         
-        while True:
-            self.req_model_from_learner()
-            
+        while True:    
             obs = env.reset()
             obs = obs_preprocess(obs, self.args.need_conv)
             lstm_hidden_state = ( torch.zeros( (1, 1, self.args.hidden_size) ), torch.zeros( (1, 1, self.args.hidden_size) ) ) # (h_s, c_s) / (seq, batch, hidden)
@@ -88,8 +92,10 @@ class Worker():
             
             # init worker-buffer
             self.buffer_reset()    
-          
+                
             for step in range(self.args.time_horizon):
+                self.req_model_from_learner() # every-step
+                
                 action, log_prob, next_lstm_hidden_state = self.model.act( obs, lstm_hidden_state )
                 next_obs, reward, done, _ = env.step( action.item() )
                 next_obs = obs_preprocess(next_obs, self.args.need_conv)
@@ -111,9 +117,11 @@ class Worker():
                 if self.rollouts.size >= self.args.seq_len or done:
                     self.rollouts.process_rollouts()
                     self.pub_rollout_to_manager()
+                    self.buffer_reset() # flush worker-buffer
                     
                     if done:
                         self.pub_stat_to_manager()
+                        # self.req_model_from_learner() # every-epi
                         self.epi_reward = 0
                         self.num_epi += 1
                         break

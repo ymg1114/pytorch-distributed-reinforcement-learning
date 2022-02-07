@@ -53,6 +53,7 @@ if __name__ == '__main__':
     parser.add_argument('--action-repeat', type=bool, default=p.repeat_actions)
     parser.add_argument('--frame-stack', type=bool, default=p.frame_stack)
     
+    parser.add_argument('--K-epoch', type=float, default=p.K_epoch)
     parser.add_argument('--lr', type=float, default=p.learning_rate)
     
     parser.add_argument('--seq-len', type=int, default=p.unroll_length)
@@ -72,8 +73,8 @@ if __name__ == '__main__':
     parser.add_argument('--entropy-coef', type=float, default=p.entropy_coef)
     
     parser.add_argument('--max-grad-norm', type=float, default=p.clip_gradient_norm)
-    parser.add_argument('--log-interval', type=int, default=p.log_save_interval)
-    parser.add_argument('--save-interval', type=int, default=p.model_save_interval)
+    parser.add_argument('--loss-log-interval', type=int, default=p.log_save_interval)
+    parser.add_argument('--model-save-interval', type=int, default=p.model_save_interval)
     parser.add_argument('--reward-scale', type=list, default=p.reward_scale)
     
     parser.add_argument('--num-worker', type=int, default=p.num_worker)
@@ -117,21 +118,23 @@ if __name__ == '__main__':
         m = mp.Process( target=manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
         m.daemon = True  # daemonic process is not allowed to create child process
         sub_procs.append(m)
-                
+        
+        learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+        learner_model.to( args.device )
+        # learner_model.share_memory() # 공유메모리 사용
+        learner_model_state_dict = learner_model.cpu().state_dict()
+
         for i in range( args.num_worker ):
             print('Build Worker {:d}'.format(i))
             worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
             worker_model.to( torch.device('cpu') )
-            worker_model.share_memory() # 공유메모리 사용
+            # worker_model.share_memory() # 공유메모리 사용
+            worker_model.load_state_dict( learner_model_state_dict )
             
             worker_name = 'worker_' + str(i)
             w = mp.Process( target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape) ) # sub-processes
             w.daemon = True  # daemonic process is not allowed to create child process
             sub_procs.append(w)
-
-        learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
-        learner_model.to( args.device )
-        learner_model.share_memory() # 공유메모리 사용
 
         run( q_batchs, args, learner_model, sub_procs )
         print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")

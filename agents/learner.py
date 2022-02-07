@@ -8,18 +8,26 @@ import torch.nn.functional as F
 
 from utils.utils import encode, decode
 from threading import Thread
-from torch.optim import RMSprop
+from torch.optim import RMSprop, Adam
 from tensorboardX import SummaryWriter
 
 local = "127.0.0.1"
+
+def counted(f):
+    def wrapper(*args, **kwargs):
+        wrapper.calls += 1
+        return f(*args, **kwargs)
+    wrapper.calls = 0
+    return wrapper
 
 class Learner():
     def __init__(self, args, model):
         self.args = args        
         self.model = model
         self.model.share_memory() # make other processes can assess
-        self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
-
+        # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
+        self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
+        
         self.rho = nn.Parameter( torch.tensor(args.rho_hat, dtype=torch.float), requires_grad=False )
         self.cis = nn.Parameter( torch.tensor(args.cis_hat, dtype=torch.float), requires_grad=False )
 
@@ -60,16 +68,18 @@ class Learner():
     def pub_model_to_workers(self, model_state_dict):
         self.pub_socket.send_pyobj( model_state_dict )
 
+    @counted
     def log_stat_tensorboard(self, data):
         len       = data['log_len']
         data_dict = data['mean_stat']
         
         for k, v in data_dict.items():
             tag = f'worker/{len}-game-mean-stat-of-[{k}]'
-            x = self.idx
+            # x = self.idx
+            x = self.log_stat_tensorboard.calls * len # global game counts
             y = v
             self.writer.add_scalar(tag, y, x)
-            # print(f'tag: {tag}, y: {y}, x: {x}')
+            print(f'tag: {tag}, y: {y}, x: {x}')
             
     def log_loss_tensorboard(self, loss, detached_losses):
         self.writer.add_scalar('total-loss', float(loss.item()), self.idx)
@@ -77,102 +87,105 @@ class Learner():
         self.writer.add_scalar('original-policy-loss', detached_losses["policy-loss"], self.idx)
         self.writer.add_scalar('original-policy-entropy', detached_losses["policy-entropy"], self.idx)
     
-    # IMPALA
+    # # IMPALA
     # def learning(self, q_batchs):
     #     self.idx = 0
     #     while True:
     #         # Basically, mini-batch-learning (seq, batch, feat)
     #         obs, actions, rewards, log_probs, dones, hidden_states, cell_states = q_batchs.get()
 
-    #         lstm_states = (hidden_states, cell_states) 
-    #         target_log_probs, target_entropy, target_value, lstm_states = self.model( obs,         # (seq+1, batch, c, h, w)
-    #                                                                                   lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
-    #                                                                                   actions )    # (seq, batch, 1)
-    #         # Copy on the same device at the input tensor
-    #         vtrace = torch.zeros( target_value.size() ).to(self.args.device)
+    #         # epoch-learning
+    #         for _ in range(self.args.K_epoch):
 
-    #         # masking
-    #         mask = 1 - dones * torch.roll(dones, 1, 0)
-    #         mask_next = torch.roll(mask, -1, 0) + dones*torch.roll(dones, -1, 0) - dones
-            
-    #         value_current = target_value[:-1] * mask     # current
-    #         value_next    = target_value[1:] * mask_next # next
-            
-    #         target_log_probs = target_log_probs * mask # current
-    #         target_entropy = target_entropy * mask     # current
-    #         log_probs = log_probs * mask               # current
-            
-    #         # Recursive calculus
-    #         # Initialisation : v_{-1}
-    #         # v_s = V(x_s) + delta_sV + gamma*c_s(v_{s+1} - V(x_{s+1}))
-    #         vtrace[-1] = value_next[-1]  # Bootstrapping
-            
-    #         # Computing importance sampling for truncation levels
-    #         importance_sampling = torch.exp( target_log_probs - log_probs )  # (seq, batch, 1)
-    #         rho                 = torch.min( self.rho, importance_sampling ) # (seq, batch, 1)
-    #         cis                 = torch.min( self.cis, importance_sampling ) # (seq, batch, 1)
-            
-    #         # Computing the deltas
-    #         delta = rho * ( rewards + self.args.gamma * value_next - value_current )
+    #             lstm_states = (hidden_states, cell_states) 
+    #             target_log_probs, target_entropy, target_value, lstm_states = self.model( obs,         # (seq+1, batch, c, h, w)
+    #                                                                                     lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
+    #                                                                                     actions )    # (seq, batch, 1)
+    #             # Copy on the same device at the input tensor
+    #             vtrace = torch.zeros( target_value.size() ).to(self.args.device)
 
-    #         # Pytorch has no funtion such as tf.scan or theano.scan
-    #         # This disgusting is compulsory for jit as reverse is not supported
-    #         for j in range(self.args.seq_len):  # ex) seq: 10
-    #             i = (self.args.seq_len - 1) - j # i: 9 ~ 0
-    #             vtrace[i] = (
-    #                 value_current[i]
-    #                 + delta[i]
-    #                 + self.args.gamma * cis[i] * (vtrace[i + 1] - value_next[i])
-    #             )
+    #             # masking
+    #             mask = 1 - dones * torch.roll(dones, 1, 0)
+    #             mask_next = torch.roll(mask, -1, 0) + dones*torch.roll(dones, -1, 0) - dones
+                
+    #             value_current = target_value[:-1] * mask     # current
+    #             value_next    = target_value[1:] * mask_next # next
+                
+    #             target_log_probs = target_log_probs * mask # current
+    #             target_entropy = target_entropy * mask     # current
+    #             log_probs = log_probs * mask               # current
+                
+    #             # Recursive calculus
+    #             # Initialisation : v_{-1}
+    #             # v_s = V(x_s) + delta_sV + gamma*c_s(v_{s+1} - V(x_{s+1}))
+    #             vtrace[-1] = value_next[-1]  # Bootstrapping
+                
+    #             # Computing importance sampling for truncation levels
+    #             importance_sampling = torch.exp( target_log_probs - log_probs )  # (seq, batch, 1)
+    #             rho                 = torch.min( self.rho, importance_sampling ) # (seq, batch, 1)
+    #             cis                 = torch.min( self.cis, importance_sampling ) # (seq, batch, 1)
+                
+    #             # Computing the deltas
+    #             delta = rho * ( rewards + self.args.gamma * value_next - value_current )
 
-    #         # Don't forget to detach !
-    #         # We need to remove the bootstrapping
-    #         vtrace, rho = vtrace.detach(), rho.detach()
-      
-    #         v_targets = vtrace.to(self.args.device)
-    #         rhos = rho.to(self.args.device)
+    #             # Pytorch has no funtion such as tf.scan or theano.scan
+    #             # This disgusting is compulsory for jit as reverse is not supported
+    #             for j in range(self.args.seq_len):  # ex) seq: 10
+    #                 i = (self.args.seq_len - 1) - j # i: 9 ~ 0
+    #                 vtrace[i] = (
+    #                     value_current[i]
+    #                     + delta[i]
+    #                     + self.args.gamma * cis[i] * (vtrace[i + 1] - value_next[i])
+    #                 )
 
-    #         # Losses computation
+    #             # Don't forget to detach !
+    #             # We need to remove the bootstrapping
+    #             vtrace, rho = vtrace.detach(), rho.detach()
+        
+    #             v_targets = vtrace.to(self.args.device)
+    #             rhos = rho.to(self.args.device)
 
-    #         # Value loss = l2 target loss -> (v_s - V_w(x_s))**2
-    #         loss_value = ( v_targets[:-1] - value_current ).pow_(2)  
-    #         loss_value = loss_value.mean()
+    #             # Losses computation
 
-    #         # Policy loss -> - rho * advantage * log_policy & entropy bonus sum(policy*log_policy)
-    #         # We detach the advantage because we don't compute
-    #         # A = reward + gamma * V_{t+1} - V_t
-    #         # L = - log_prob * A
-    #         # The advantage function reduces variance
-    #         advantage = rewards + self.args.gamma * v_targets[1:] - value_current
-    #         loss_policy = -rhos * target_log_probs * advantage.detach()
-    #         loss_policy = loss_policy.mean()
+    #             # Value loss = l2 target loss -> (v_s - V_w(x_s))**2
+    #             loss_value = ( v_targets[:-1] - value_current ).pow_(2)  
+    #             loss_value = loss_value.mean()
 
-    #         # Adding the entropy bonus (much like A3C for instance)
-    #         # The entropy is like a measure of the disorder
-    #         entropy = target_entropy.mean()
+    #             # Policy loss -> - rho * advantage * log_policy & entropy bonus sum(policy*log_policy)
+    #             # We detach the advantage because we don't compute
+    #             # A = reward + gamma * V_{t+1} - V_t
+    #             # L = - log_prob * A
+    #             # The advantage function reduces variance
+    #             advantage = rewards + self.args.gamma * v_targets[1:] - value_current
+    #             loss_policy = -rhos * target_log_probs * advantage.detach()
+    #             loss_policy = loss_policy.mean()
 
-    #         # Summing all the losses together
-    #         loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*entropy
+    #             # Adding the entropy bonus (much like A3C for instance)
+    #             # The entropy is like a measure of the disorder
+    #             entropy = target_entropy.mean()
 
-    #         # These are only used for the statistics
-    #         detached_losses = {
-    #             "policy-loss": loss_policy.detach().cpu(),
-    #             "value-loss": loss_value.detach().cpu(),
-    #             "policy-entropy": entropy.detach().cpu(),
-    #         }
-            
-    #         self.optimizer.zero_grad()
-    #         loss.backward()
-    #         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-    #         print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
-    #         self.optimizer.step()
+    #             # Summing all the losses together
+    #             loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*entropy
+
+    #             # These are only used for the statistics
+    #             detached_losses = {
+    #                 "policy-loss": loss_policy.detach().cpu(),
+    #                 "value-loss": loss_value.detach().cpu(),
+    #                 "policy-entropy": entropy.detach().cpu(),
+    #             }
+                
+    #             self.optimizer.zero_grad()
+    #             loss.backward()
+    #             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+    #             print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
+    #             self.optimizer.step()
             
     #         self.pub_model_to_workers( self.model.cpu().state_dict() )
             
-    #         if (self.idx % self.args.log_interval == 0):
+    #         if (self.idx % self.args.loss_log_interval == 0):
     #             self.log_loss_tensorboard(loss, detached_losses)
 
-    #         if (self.idx % self.args.save_interval == 0):
+    #         if (self.idx % self.args.model_save_interval == 0):
     #             torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"))
             
     #         self.idx+= 1
@@ -186,63 +199,69 @@ class Learner():
             # Basically, mini-batch-learning (seq, batch, feat)
             obs, actions, rewards, log_probs, dones, hidden_states, cell_states = q_batchs.get()
 
-            lstm_states = (hidden_states, cell_states) 
-            target_log_probs, target_entropy, target_value, lstm_states = self.model( obs,         # (seq+1, batch, c, h, w)
-                                                                                      lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
-                                                                                      actions )    # (seq, batch, 1)
-            # masking
-            mask = 1 - dones * torch.roll(dones, 1, 0)
-            mask_next = torch.roll(mask, -1, 0) + dones*torch.roll(dones, -1, 0) - dones
-            
-            value_current = target_value[:-1] * mask     # current
-            value_next    = target_value[1:] * mask_next # next
-            
-            target_log_probs = target_log_probs * mask # current
-            target_entropy = target_entropy * mask     # current
-            log_probs = log_probs * mask               # current
-            
-            td_target = rewards + self.args.gamma * value_next
-            delta = td_target - value_current
-            delta = delta.detach().numpy()
-            
-            advantage_lst = []
-            advantage = torch.zeros(delta.shape[1:]) # (seq, batch, d) -> (batch, d)
-            for item in delta[::-1]:
-                advantage = self.args.gamma * self.args.lmbda * advantage + item
-                advantage_lst.append(advantage)
-            advantage_lst.reverse()
-            advantage = torch.stack(advantage_lst, dim=0).to(torch.float)
+            # epoch-learning
+            for _ in range(self.args.K_epoch):
+                lstm_states = (hidden_states, cell_states) 
+                
+                # on-line model forwarding
+                target_log_probs, target_entropy, target_value, lstm_states = self.model( obs,         # (seq+1, batch, c, h, w)
+                                                                                          lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
+                                                                                          actions )    # (seq, batch, 1)
+                # masking
+                mask = 1 - dones * torch.roll(dones, 1, 0)
+                mask_next = torch.roll(mask, -1, 0) + dones*torch.roll(dones, -1, 0) - dones
+                
+                value_current = target_value[:-1] * mask     # current
+                value_next    = target_value[1:] * mask_next # next
+                
+                target_log_probs = target_log_probs * mask # current
+                target_entropy = target_entropy * mask     # current
+                log_probs = log_probs * mask               # current
+                
+                # td-target (value-target)
+                td_target = rewards + self.args.gamma * value_next
+                delta = td_target - value_current
+                delta = delta.detach().numpy()
+                
+                # ppo-gae (advantage)
+                advantage_lst = []
+                advantage = torch.zeros(delta.shape[1:]) # (seq, batch, d) -> (batch, d)
+                for item in delta[::-1]:
+                    advantage = self.args.gamma * self.args.lmbda * advantage + item
+                    advantage_lst.append(advantage)
+                advantage_lst.reverse()
+                advantage = torch.stack(advantage_lst, dim=0).to(torch.float)
 
-            ratio = torch.exp(target_log_probs - log_probs)  # a/b == log(exp(a)-exp(b))
-            surr1 = ratio * advantage
-            surr2 = torch.clamp(ratio, 1-self.args.eps_clip, 1+self.args.eps_clip) * advantage
-            
-            loss_policy = -torch.min(surr1, surr2).mean()
-            loss_value = F.smooth_l1_loss(value_current, td_target.detach()).mean()  
-            policy_entropy = target_entropy.mean()
-            
-            # Summing all the losses together
-            loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*policy_entropy
+                ratio = torch.exp(target_log_probs - log_probs)  # a/b == log(exp(a)-exp(b))
+                surr1 = ratio * advantage
+                surr2 = torch.clamp(ratio, 1-self.args.eps_clip, 1+self.args.eps_clip) * advantage
+                
+                loss_policy = -torch.min(surr1, surr2).mean()
+                loss_value = F.smooth_l1_loss(value_current, td_target.detach()).mean()  
+                policy_entropy = target_entropy.mean()
+                
+                # Summing all the losses together
+                loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*policy_entropy
 
-            # These are only used for the statistics
-            detached_losses = {
-                "policy-loss": loss_policy.detach().cpu(),
-                "value-loss": loss_value.detach().cpu(),
-                "policy-entropy": policy_entropy.detach().cpu(),
-            }
-            
-            self.optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-            print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
-            self.optimizer.step()
-            
+                # These are only used for the statistics
+                detached_losses = {
+                    "policy-loss": loss_policy.detach().cpu(),
+                    "value-loss": loss_value.detach().cpu(),
+                    "policy-entropy": policy_entropy.detach().cpu(),
+                }
+                
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+                print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
+                self.optimizer.step()
+                
             self.pub_model_to_workers( self.model.cpu().state_dict() )
             
-            if (self.idx % self.args.log_interval == 0):
+            if (self.idx % self.args.loss_log_interval == 0):
                 self.log_loss_tensorboard(loss, detached_losses)
 
-            if (self.idx % self.args.save_interval == 0):
+            if (self.idx % self.args.model_save_interval == 0):
                 torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"))
             
             self.idx+= 1

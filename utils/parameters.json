@@ -12,8 +12,8 @@
     "frame_stack": 4,
 
     "reward_scale": 0.01,
-    "unroll_length": 10,
-    "batch_size": 64,
+    "unroll_length": 5,
+    "batch_size": 128,
     "gamma": 0.99,
     "lmbda": 0.95,
     "eps_clip": 0.1,
@@ -24,8 +24,9 @@
     "value_loss_coef": 0.5,
     "entropy_coef": 0.0005,
 
-    "learning_rate": 0.00005,
-    "clip_gradient_norm": 1,
+    "K_epoch": 1,
+    "learning_rate": 0.0001,
+    "clip_gradient_norm": 5,
 
     "log_save_interval": 50,
     "model_save_interval": 100,
