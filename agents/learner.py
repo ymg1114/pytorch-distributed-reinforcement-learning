@@ -3,6 +3,7 @@ import zmq
 import torch
 import pickle
 import time
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -24,7 +25,7 @@ class Learner():
     def __init__(self, args, model):
         self.args = args        
         self.model = model
-        self.model.share_memory() # make other processes can assess
+        # self.model.share_memory() # make other processes can assess
         # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
         self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
         
@@ -206,31 +207,34 @@ class Learner():
                 # on-line model forwarding
                 target_log_probs, target_entropy, target_value, lstm_states = self.model( obs,         # (seq+1, batch, c, h, w)
                                                                                           lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
-                                                                                          actions )    # (seq, batch, 1)
+                                                                                          actions )    # (seq, batch, 1)            
                 # masking
                 mask = 1 - dones * torch.roll(dones, 1, 0)
-                mask_next = torch.roll(mask, -1, 0) + dones*torch.roll(dones, -1, 0) - dones
-                
+                mask_next = 1 - dones
+                                
                 value_current = target_value[:-1] * mask     # current
                 value_next    = target_value[1:] * mask_next # next
                 
                 target_log_probs = target_log_probs * mask # current
-                target_entropy = target_entropy * mask     # current
                 log_probs = log_probs * mask               # current
+                target_entropy = target_entropy * mask     # current
                 
                 # td-target (value-target)
+                # delta for ppo-gae
                 td_target = rewards + self.args.gamma * value_next
                 delta = td_target - value_current
                 delta = delta.detach().numpy()
                 
                 # ppo-gae (advantage)
-                advantage_lst = []
-                advantage = torch.zeros(delta.shape[1:]) # (seq, batch, d) -> (batch, d)
-                for item in delta[::-1]:
-                    advantage = self.args.gamma * self.args.lmbda * advantage + item
-                    advantage_lst.append(advantage)
-                advantage_lst.reverse()
-                advantage = torch.stack(advantage_lst, dim=0).to(torch.float)
+                advantages = []
+                advantage_t = np.zeros(delta.shape[1:]) # Terminal: (seq, batch, d) -> (batch, d)
+                mask_row = mask_next.detach().cpu().numpy()
+                for (delta_row, m_r) in zip(delta[::-1], mask_row[::-1]):
+                    advantage_t = delta_row + self.args.gamma * self.args.lmbda * m_r * advantage_t # recursive
+                    advantages.append(advantage_t)
+                advantages.reverse()
+                # advantage = torch.stack(advantages, dim=0).to(torch.float)
+                advantage = torch.tensor(advantages, dtype=torch.float)
 
                 ratio = torch.exp(target_log_probs - log_probs)  # a/b == log(exp(a)-exp(b))
                 surr1 = ratio * advantage
