@@ -112,8 +112,8 @@ if __name__ == '__main__':
             obs_shape = [ env.observation_space.shape[0] ]
         env.close()
         
-        q_workers = mp.Queue(maxsize=3*args.batch_size) # q for multi-worker (manager)
-        q_batchs = mp.Queue(maxsize=5)    # q for learner
+        q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker (manager)
+        q_batchs = mp.Queue(maxsize=1)    # q for learner
         
         sub_procs = []
         m = mp.Process( target=manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
