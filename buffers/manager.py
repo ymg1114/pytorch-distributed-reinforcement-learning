@@ -49,7 +49,7 @@ class Manager():
         self.batch_num = 0
         
     def check_q(self, q_workers):
-        if q_workers.qsize() >= self.args.batch_size:
+        if q_workers.qsize() == self.args.batch_size:
             return True
         else:
             return False
@@ -65,6 +65,8 @@ class Manager():
             filter, data = decode(filter, data)
              
             if filter == 'rollout':
+                if q_workers.qsize() == q_workers._maxsize:
+                    q_workers.get()
                 q_workers.put( data )
                 
             elif filter == 'stat':
@@ -75,7 +77,7 @@ class Manager():
                     self.pub_socket.send_multipart( [ _filter, _data ] )
                     self.stat_list = []
                     
-            time.sleep(0.001)
+            time.sleep(0.01)
             
     def process_stat(self):
         mean_stat = {}
@@ -116,7 +118,7 @@ class Manager():
                 self.produce_batch()
                 self.reset_batch()
                 
-            time.sleep(0.001)
+            time.sleep(0.01)
             
         # if hasattr(self, "m_t") and self.m_t is not None:
         #     self.m_t.join()
@@ -135,14 +137,26 @@ class Manager():
 
         self.pub_batch_to_learner( batch )
         
-    def get_batch(self):
-        o = self.obs_batch[:, :self.args.batch_size]    # (seq, batch, feat)
-        a = self.action_batch[:, :self.args.batch_size]
-        r = self.reward_batch[:, :self.args.batch_size]
-        log_p = self.log_prob_batch[:, :self.args.batch_size]
-        done = self.done_batch[:, :self.args.batch_size]
+    # def get_batch(self):
+    #     o = self.obs_batch[:, :self.args.batch_size]    # (seq, batch, feat)
+    #     a = self.action_batch[:, :self.args.batch_size]
+    #     r = self.reward_batch[:, :self.args.batch_size]
+    #     log_p = self.log_prob_batch[:, :self.args.batch_size]
+    #     done = self.done_batch[:, :self.args.batch_size]
         
-        h_s = self.hidden_state_batch[:, :self.args.batch_size]
-        c_s = self.cell_state_batch[:, :self.args.batch_size]
+    #     h_s = self.hidden_state_batch[:, :self.args.batch_size]
+    #     c_s = self.cell_state_batch[:, :self.args.batch_size]
+        
+    #     return o, a, r, log_p, done, h_s, c_s
+    
+    def get_batch(self):
+        o = self.obs_batch    # (seq, batch, feat)
+        a = self.action_batch
+        r = self.reward_batch
+        log_p = self.log_prob_batch
+        done = self.done_batch
+        
+        h_s = self.hidden_state_batch
+        c_s = self.cell_state_batch
         
         return o, a, r, log_p, done, h_s, c_s

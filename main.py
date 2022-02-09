@@ -20,8 +20,9 @@ from utils.utils import ParameterServer, kill_processes
         
 def worker_run(args, model, worker_name, port, *obs_shape):
     worker = Worker(args, model, worker_name, port, obs_shape)
+    worker.sub_model_from_learner()
     worker.collect_rolloutdata() # collect rollout-data (multi-workers)
-
+    
 def manager_run(q_workers, args, *obs_shape):
     manager = Manager(args, args.worker_port, obs_shape)
     manager.sub_data_from_workers(q_workers) # received rollout-data/stat from workers
@@ -112,7 +113,7 @@ if __name__ == '__main__':
         env.close()
         
         q_workers = mp.Queue(maxsize=3*args.batch_size) # q for multi-worker (manager)
-        q_batchs = mp.Queue(maxsize=args.batch_size)    # q for learner
+        q_batchs = mp.Queue(maxsize=1)    # q for learner
         
         sub_procs = []
         m = mp.Process( target=manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
@@ -121,14 +122,14 @@ if __name__ == '__main__':
         
         learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
         learner_model.to( args.device )
-        # learner_model.share_memory() # 공유메모리 사용
+        learner_model.share_memory() # 공유메모리 사용
         learner_model_state_dict = learner_model.cpu().state_dict()
 
         for i in range( args.num_worker ):
             print('Build Worker {:d}'.format(i))
             worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
             worker_model.to( torch.device('cpu') )
-            # worker_model.share_memory() # 공유메모리 사용
+            worker_model.share_memory() # 공유메모리 사용
             worker_model.load_state_dict( learner_model_state_dict )
             
             worker_name = 'worker_' + str(i)

@@ -1,11 +1,11 @@
 
 {
-    "target_env": "LunarLander-v2",
+    "target_env": "CartPole-v1",
     "need_conv": false,
     "h": 84,
     "w": 84,
     "gray": false,
-    "hidden_size": 64,
+    "hidden_size": 32,
 
     "time_horizon": 500,
     "repeat_actions": 4,
@@ -13,7 +13,7 @@
 
     "reward_scale": 0.01,
     "unroll_length": 5,
-    "batch_size": 128,
+    "batch_size": 64,
     "gamma": 0.99,
     "lmbda": 0.95,
     "eps_clip": 0.1,
@@ -25,7 +25,7 @@
     "entropy_coef": 0.0005,
 
     "K_epoch": 1,
-    "learning_rate": 0.0001,
+    "learning_rate": 0.001,
     "clip_gradient_norm": 5,
 
     "log_save_interval": 50,

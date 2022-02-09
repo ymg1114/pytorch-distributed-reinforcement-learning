@@ -6,6 +6,7 @@ import gym
 import torch
 import numpy as np
 
+from threading import Thread
 from utils.utils import encode, decode
 from buffers.storage import WorkerRolloutStorage
 from utils.utils import obs_preprocess, ParameterServer
@@ -36,6 +37,24 @@ class Worker():
         self.sub_socket.connect( f"tcp://{local}:{self.args.learner_port + 1}" ) # subscribe fresh learner-model
         self.sub_socket.setsockopt( zmq.SUBSCRIBE, b'' )
     
+    def sub_model_from_learner(self):
+        self.w_t = Thread( target=self.refresh_models )
+        self.w_t.daemon = True 
+        self.w_t.start()
+    
+    def refresh_models(self):
+        while True:
+            try:
+                model_state_dict = self.sub_socket.recv_pyobj(flags=zmq.NOBLOCK)
+                if model_state_dict:
+                    self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
+                    # print( f'{self.worker_name}: Received fresh model from learner !' )
+            except zmq.Again as e:
+                # print("No model-weight received yet")
+                pass
+                    
+            time.sleep(0.01)
+
     def pub_rollout_to_manager(self):
         rollout_data = (self.rollouts.obs_roll, 
                         self.rollouts.action_roll, 
@@ -49,16 +68,16 @@ class Worker():
         filter, data = encode('rollout',  rollout_data)
         self.pub_socket.send_multipart( [ filter, data ] ) 
         
-    # NO-BLOCK
-    def req_model_from_learner(self):
-        try:
-            model_state_dict = self.sub_socket.recv_pyobj(flags=zmq.NOBLOCK)
-            if model_state_dict:
-                self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
-                # print( f'{self.worker_name}: Received fresh model from learner !' )
-        except zmq.Again as e:
-            # print("No model-weight received yet")
-            pass
+    # # NO-BLOCK
+    # def req_model_from_learner(self):
+    #     try:
+    #         model_state_dict = self.sub_socket.recv_pyobj(flags=zmq.NOBLOCK)
+    #         if model_state_dict:
+    #             self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
+    #             # print( f'{self.worker_name}: Received fresh model from learner !' )
+    #     except zmq.Again as e:
+    #         # print("No model-weight received yet")
+    #         pass
         
     # # BLOCK
     # def req_model_from_learner(self):
@@ -94,7 +113,7 @@ class Worker():
             self.buffer_reset()    
                 
             for step in range(self.args.time_horizon):
-                self.req_model_from_learner() # every-step
+                # self.req_model_from_learner() # every-step
                 
                 action, log_prob, next_lstm_hidden_state = self.model.act( obs, lstm_hidden_state )
                 next_obs, reward, done, _ = env.step( action.item() )
@@ -126,5 +145,5 @@ class Worker():
                         self.num_epi += 1
                         break
                     
-                time.sleep(0.001)
+                time.sleep(0.01)
             

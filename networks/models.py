@@ -1,6 +1,7 @@
 import torch 
 import torch.nn as nn
 import numpy as np
+import torch.nn.functional as F
 
 from torch.distributions import Categorical
 from enum import Enum
@@ -209,7 +210,8 @@ class ConvLSTM(nn.Module):
 
     @torch.jit.ignore
     def _act_dist(self, logits):
-        dist = self.dist(logits=logits)
+        probs = F.softmax(logits, dim=-1) # logits: (batch, feat)
+        dist = self.dist(probs)
 
         action = dist.sample()
         log_prob = dist.log_prob(action)
@@ -258,13 +260,10 @@ class ConvLSTM(nn.Module):
         lstm_hxs[0].detach_()
         lstm_hxs[1].detach_()
         
-        behaviour_actions = behaviour_actions.contiguous().view( seq*batch )  # Shape for dist
-                                                                              # (seq*batch, ) / action index
         target_value  = self.value(x)  # ( (seq+1), batch, 1 )
         logits = self.logits(x)        # ( (seq+1), batch, num_actions ) 
         logits = logits[:-1]           # ( seq, batch, num_actions ) 
-        logits = logits.view( seq*batch, -1 )
-        
+
         target_log_probs, target_entropy = self._forward_dist(logits, behaviour_actions) # current
 
         target_log_probs = target_log_probs.view( seq, batch, 1 )
@@ -275,11 +274,13 @@ class ConvLSTM(nn.Module):
 
     @torch.jit.ignore
     def _forward_dist(self, logits, behaviour_actions):
-        dist = self.dist(logits=logits)
-        target_log_probs = dist.log_prob(behaviour_actions) # (seq*batch, )
-        target_entropy = dist.entropy()                     # (seq*batch, )
+        probs = F.softmax(logits, dim=-1) # ( seq, batch, num_actions )
+        dist = self.dist(probs)           # ( seq, batch, num_actions ) 
+        
+        target_log_probs = dist.log_prob( behaviour_actions.squeeze(-1) ) # (seq, batch)
+        target_entropy = dist.entropy()                                   # (seq, batch)
+        
         return target_log_probs, target_entropy
-    
 
 class MlpLSTM(ConvLSTM):
     def __init__(self, f, n_outputs, sequence_length, hidden_size):
