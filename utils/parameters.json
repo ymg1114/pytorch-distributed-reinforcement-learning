@@ -5,7 +5,7 @@
     "h": 84,
     "w": 84,
     "gray": false,
-    "hidden_size": 32,
+    "hidden_size": 64,
 
     "time_horizon": 500,
     "repeat_actions": 4,
@@ -32,7 +32,7 @@
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker": 1,
+    "num_worker": 50,
     "worker_port": 2226,
     "learner_port": 4226
 }
