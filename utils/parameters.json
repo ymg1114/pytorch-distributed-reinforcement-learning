@@ -32,7 +32,7 @@
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker": 30,
+    "num_worker": 1,
     "worker_port": 2226,
     "learner_port": 4226
 }

@@ -8,8 +8,8 @@ import numpy as np
 
 from threading import Thread
 from utils.utils import encode, decode
-from buffers.storage import WorkerRolloutStorage
 from utils.utils import obs_preprocess, ParameterServer
+from buffers.rollout_buffer import WorkerRolloutStorage
 from tensorboardX import SummaryWriter
 
 local = "127.0.0.1"
@@ -28,16 +28,15 @@ class Worker():
     def zeromq_set(self, port):  
         context = zmq.Context()  
             
-        # worker <-> manager
+        # worker <-> learner
         self.pub_socket = context.socket( zmq.PUB ) 
         self.pub_socket.connect( f"tcp://{local}:{port}" ) # publish rollout-data, stat-data
 
-        # worker <-> learner
         self.sub_socket = context.socket( zmq.SUB ) 
-        self.sub_socket.connect( f"tcp://{local}:{self.args.learner_port + 1}" ) # subscribe fresh learner-model
+        self.sub_socket.connect( f"tcp://{local}:{self.args.learner_port}" ) # subscribe fresh learner-model
         self.sub_socket.setsockopt( zmq.SUBSCRIBE, b'' )
     
-    def sub_model_from_learner(self):
+    def sub_model_from_learner_Thread(self):
         self.w_t = Thread( target=self.refresh_models )
         self.w_t.daemon = True 
         self.w_t.start()
@@ -55,7 +54,7 @@ class Worker():
                     
             time.sleep(0.01)
 
-    def pub_rollout_to_manager(self):
+    def pub_rollout_to_learner(self):
         rollout_data = (self.rollouts.obs_roll, 
                         self.rollouts.action_roll, 
                         self.rollouts.reward_roll,
@@ -85,7 +84,7 @@ class Worker():
     #     if model_state_dict:
     #         self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
         
-    def pub_stat_to_manager(self):
+    def pub_stat_to_learner(self):
         stat = {}
         stat.update( {'epi_reward': self.epi_reward} )
         
@@ -135,11 +134,11 @@ class Worker():
                 
                 if self.rollouts.size >= self.args.seq_len or done:
                     self.rollouts.process_rollouts()
-                    self.pub_rollout_to_manager()
+                    self.pub_rollout_to_learner()
                     self.buffer_reset() # flush worker-buffer
                     
                     if done:
-                        self.pub_stat_to_manager()
+                        self.pub_stat_to_learner()
                         # self.req_model_from_learner() # every-epi
                         self.epi_reward = 0
                         self.num_epi += 1

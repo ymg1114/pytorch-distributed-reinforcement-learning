@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 from agents.learner import Learner
 from agents.worker import Worker
-from buffers.manager import Manager
+# from buffers.manager import Manager
 
 from threading import Thread
 from utils.utils import ParameterServer, kill_processes
@@ -20,20 +20,30 @@ from utils.utils import ParameterServer, kill_processes
         
 def worker_run(args, model, worker_name, port, *obs_shape):
     worker = Worker(args, model, worker_name, port, obs_shape)
-    worker.sub_model_from_learner()
+    worker.sub_model_from_learner_Thread()
     worker.collect_rolloutdata() # collect rollout-data (multi-workers)
     
-def manager_run(q_workers, args, *obs_shape):
-    manager = Manager(args, args.worker_port, obs_shape)
-    manager.sub_data_from_workers(q_workers) # received rollout-data/stat from workers
-    manager.make_batch(q_workers)            # make_batch & send batch-data to learner
-                                
-def run(q_batchs, args, learner_model, sub_procs):
+# # Deprecated
+# def manager_run(q_workers, args, *obs_shape):
+#     manager = Manager(args, args.worker_port, obs_shape)
+#     manager.sub_data_from_workers(q_workers) # received rollout-data/stat from workers
+#     manager.make_batch(q_workers)            # make_batch & send batch-data to learner
+
+# # Deprecated
+# def run(q_batchs, args, learner_model, sub_procs):
+#     [ p.start() for p in sub_procs ]
+#     learner = Learner(args, learner_model)
+#     learner.sub_data_from_manager(q_batchs) # main-process (sub-thread)
+#     learner.learning(q_batchs)              # main-process
+#     [ p.join() for p in sub_procs ]
+
+def run(args, learner_model, sub_procs, *obs_shape):
+    learner = Learner(args, obs_shape, learner_model)
+    t1 = learner.sub_data_from_workers_Thread() # main-process (sub-thread)
+    sub_procs.append( t1 )
+    
     [ p.start() for p in sub_procs ]
-    learner = Learner(args, learner_model)
-    learner.sub_data_from_manager(q_batchs) # main-process (sub-thread)
-    learner.learning(q_batchs)              # main-process
-    [ p.join() for p in sub_procs ]
+    learner.learning()                          # main-process
 
 
 if __name__ == '__main__':    
@@ -85,7 +95,8 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     args.device = torch.device('cuda:{p.gpu_idx}' if torch.cuda.is_available() else 'cpu')
-
+    print(f"device: {args.device}")
+    
     try:
         mp.set_start_method('spawn')
         print("spawn init")
@@ -112,13 +123,15 @@ if __name__ == '__main__':
             obs_shape = [ env.observation_space.shape[0] ]
         env.close()
         
-        q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker (manager)
-        q_batchs = mp.Queue(maxsize=1)    # q for learner
+        # # Deprecated
+        # q_batchs = mp.Queue(maxsize=1)    # q for learner
         
         sub_procs = []
-        m = mp.Process( target=manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
-        m.daemon = True  # daemonic process is not allowed to create child process
-        sub_procs.append(m)
+        
+        # # Deprecated
+        # m = mp.Process( target=manager_run, args=(q_workers, args, *obs_shape) ) # sub-processes
+        # m.daemon = True  # daemonic process is not allowed to create child process
+        # sub_procs.append(m)
         
         learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
         learner_model.to( args.device )
@@ -136,9 +149,13 @@ if __name__ == '__main__':
             w = mp.Process( target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape) ) # sub-processes
             w.daemon = True  # daemonic process is not allowed to create child process
             sub_procs.append(w)
-
-        run( q_batchs, args, learner_model, sub_procs )
+        
+        # # Deprecated
+        # run( q_batchs, args, learner_model, sub_procs )
+        
+        run( args, learner_model, sub_procs, *obs_shape )
         print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
         
     finally:
         kill_processes()
+        [ p.join() for p in sub_procs ]
