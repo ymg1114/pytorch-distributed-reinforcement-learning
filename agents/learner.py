@@ -27,7 +27,7 @@ def counted(f):
 class Learner():
     def __init__(self, args, obs_shape, model):
         self.args = args        
-        self.model = model
+        self.model = model.to( args.device )
         # self.model.share_memory() # make other processes can assess
         # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
         self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
@@ -94,7 +94,9 @@ class Learner():
         return mean_stat
 
     def pub_model_to_workers(self, model_state_dict):
-        self.pub_socket.send_pyobj( model_state_dict )
+        filter, data = encode('model',  model_state_dict)
+        
+        self.pub_socket.send_multipart( [ filter, data ] ) 
 
     @counted
     def log_stat_tensorboard(self, data):
@@ -210,7 +212,7 @@ class Learner():
     #                 print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
     #                 self.optimizer.step()
                 
-    #             self.pub_model_to_workers( self.model.cpu().state_dict() )
+    #             self.pub_model_to_workers( self.model.state_dict() )
                 
     #             if (self.idx % self.args.loss_log_interval == 0):
     #                 self.log_loss_tensorboard(loss, detached_losses)
@@ -256,7 +258,7 @@ class Learner():
                     # delta for ppo-gae
                     td_target = rewards + self.args.gamma * value_next
                     delta = td_target - value_current
-                    delta = delta.detach().numpy()
+                    delta = delta.cpu().detach().numpy()
                     
                     # ppo-gae (advantage)
                     advantages = []
@@ -267,7 +269,7 @@ class Learner():
                         advantages.append(advantage_t)
                     advantages.reverse()
                     # advantage = torch.stack(advantages, dim=0).to(torch.float)
-                    advantage = torch.tensor(advantages, dtype=torch.float)
+                    advantage = torch.tensor(advantages, dtype=torch.float).to( self.args.device )
 
                     ratio = torch.exp(target_log_probs - log_probs)  # a/b == log(exp(a)-exp(b))
                     surr1 = ratio * advantage
@@ -293,7 +295,7 @@ class Learner():
                     print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
                     self.optimizer.step()
                     
-                self.pub_model_to_workers( self.model.cpu().state_dict() )
+                self.pub_model_to_workers( self.model.state_dict() )
                 
                 if (self.idx % self.args.loss_log_interval == 0):
                     self.log_loss_tensorboard(loss, detached_losses)

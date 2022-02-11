@@ -22,17 +22,17 @@
 
     "policy_loss_coef": 1,
     "value_loss_coef": 0.5,
-    "entropy_coef": 0.0005,
+    "entropy_coef": 0.0003,
 
     "K_epoch": 1,
-    "learning_rate": 0.001,
+    "learning_rate": 0.0001,
     "clip_gradient_norm": 5,
 
     "log_save_interval": 50,
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker": 50,
+    "num_worker": 30,
     "worker_port": 2226,
     "learner_port": 4226
 }

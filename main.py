@@ -94,7 +94,7 @@ if __name__ == '__main__':
     parser.add_argument('--learner-port', type=int, default=p.learner_port)
     
     args = parser.parse_args()
-    args.device = torch.device('cuda:{p.gpu_idx}' if torch.cuda.is_available() else 'cpu')
+    args.device = torch.device(f'cuda:{p.gpu_idx}' if torch.cuda.is_available() else 'cpu')
     print(f"device: {args.device}")
     
     try:
@@ -135,14 +135,14 @@ if __name__ == '__main__':
         
         learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
         learner_model.to( args.device )
-        learner_model.share_memory() # 공유메모리 사용
+        # learner_model.share_memory() # 공유메모리 사용
         learner_model_state_dict = learner_model.cpu().state_dict()
 
         for i in range( args.num_worker ):
             print('Build Worker {:d}'.format(i))
             worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
             worker_model.to( torch.device('cpu') )
-            worker_model.share_memory() # 공유메모리 사용
+            # worker_model.share_memory() # 공유메모리 사용
             worker_model.load_state_dict( learner_model_state_dict )
             
             worker_name = 'worker_' + str(i)
@@ -157,5 +157,6 @@ if __name__ == '__main__':
         print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
         
     finally:
-        kill_processes()
-        [ p.join() for p in sub_procs ]
+        pass
+        # kill_processes()
+        # [ p.join() for p in sub_procs ]

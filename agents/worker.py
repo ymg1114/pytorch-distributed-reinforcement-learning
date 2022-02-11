@@ -44,10 +44,14 @@ class Worker():
     def refresh_models(self):
         while True:
             try:
-                model_state_dict = self.sub_socket.recv_pyobj(flags=zmq.NOBLOCK)
-                if model_state_dict:
-                    self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
-                    # print( f'{self.worker_name}: Received fresh model from learner !' )
+                filter, data = self.sub_socket.recv_multipart(flags=zmq.NOBLOCK)
+                filter, data = decode(filter, data)
+
+                if filter == 'model':
+                    model_state_dict = { k: v.to('cpu') for k, v in data.items() }
+                    if model_state_dict:
+                        self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
+                        # print( f'{self.worker_name}: Received fresh model from learner !' )
             except zmq.Again as e:
                 # print("No model-weight received yet")
                 pass
