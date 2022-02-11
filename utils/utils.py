@@ -101,10 +101,10 @@ def kill_processes():
     parent.kill()    
         
 def encode(filter, data):
-    return blosc2.compress2( pickle.dumps(filter) ), blosc2.compress2( pickle.dumps(data) )
+    return pickle.dumps( filter ), blosc2.compress2( pickle.dumps(data) )
 
 def decode(filter, data):
-    return pickle.loads( blosc2.decompress2(filter) ), pickle.loads( blosc2.decompress2(data) )
+    return pickle.loads( filter ), pickle.loads( blosc2.decompress2(data) )
 
 if __name__ == "__main__":
     kill_processes()
