@@ -20,23 +20,23 @@ class Manager():
         
         self.stat_list = []
         self.stat_log_len = 20
-        self.zeromq_set( worker_port )
+        self.zeromq_set(worker_port)
         self.reset_batch()
  
     def zeromq_set(self, worker_port):
         context = zmq.Context()
         
         # manager <-> worker 
-        self.sub_socket = context.socket( zmq.SUB ) # subscribe rollout-data, stat-data
-        self.sub_socket.bind( f"tcp://{local}:{worker_port}" )
-        self.sub_socket.setsockopt( zmq.SUBSCRIBE, b'' )
+        self.sub_socket = context.socket(zmq.SUB) # subscribe rollout-data, stat-data
+        self.sub_socket.bind(f"tcp://{local}:{worker_port}")
+        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
 
         # manager <-> learner
         self.pub_socket = context.socket( zmq.PUB ) # publish batch-data, stat-data
-        self.pub_socket.connect( f"tcp://{local}:{self.args.learner_port}"  )
+        self.pub_socket.connect(f"tcp://{local}:{self.args.learner_port}")
 
     def pub_batch_to_learner(self, batch):
-        self.pub_socket.send_multipart( [encode('batch', batch)] )
+        self.pub_socket.send_multipart([encode('batch', batch)])
 
     def reset_batch(self):
         self.obs_batch          = torch.zeros(self.args.seq_len+1, self.args.batch_size, *self.obs_shape)
@@ -57,8 +57,8 @@ class Manager():
         else:
             return False
         
-    def sub_data_from_workers(self, q_workers):
-        self.m_t = Thread( target=self.receive_data, args=(q_workers,) )
+    def sub_data_from_workers_Thread(self, q_workers):
+        self.m_t = Thread(target=self.receive_data, args=(q_workers,))
         self.m_t.daemon = True 
         self.m_t.start()
     
@@ -72,9 +72,9 @@ class Manager():
                 
             elif filter == 'stat':
                 self.stat_list.append( data )
-                if len( self.stat_list ) >= self.stat_log_len:
+                if len(self.stat_list) >= self.stat_log_len:
                     mean_stat = self.process_stat()
-                    self.pub_socket.send_multipart( [encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})] )
+                    self.pub_socket.send_multipart([encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})])
                     self.stat_list = []
                     
             time.sleep(0.01)
@@ -84,17 +84,17 @@ class Manager():
         for stat_dict in self.stat_list:
             for k, v in stat_dict.items():
                 if not k in mean_stat:
-                    mean_stat[ k ] = [ v ]
+                    mean_stat[k] = [v]
                 else:
-                    mean_stat[ k ].append( v )
+                    mean_stat[k].append(v)
                     
-        mean_stat = { k: np.mean(v) for k, v in mean_stat.items() }
+        mean_stat = {k: np.mean(v) for k, v in mean_stat.items()}
         return mean_stat
     
     def make_batch(self, q_workers):
         while True:
-            if self.check_q( q_workers ):
-                for _ in range( self.args.batch_size ):
+            if self.check_q(q_workers):
+                for _ in range(self.args.batch_size):
                     rollout = L.get(q_workers)
                     
                     obs          = rollout[0]
@@ -134,8 +134,7 @@ class Manager():
                  h_s.to(self.device), 
                  c_s.to(self.device)
                 )
-
-        self.pub_batch_to_learner( batch )
+        self.pub_batch_to_learner(batch)
         
     # def get_batch(self):
     #     o = self.obs_batch[:, :self.args.batch_size]    # (seq, batch, feat)
