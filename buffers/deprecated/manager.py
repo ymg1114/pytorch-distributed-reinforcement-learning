@@ -4,9 +4,13 @@ import time
 import numpy as np
 
 from utils.utils import encode, decode
+from utils import Lock
 from threading import Thread
 
 local = "127.0.0.1"
+
+
+L = Lock() 
 
 class Manager():
     def __init__(self, args, worker_port, obs_shape):
@@ -63,8 +67,8 @@ class Manager():
             filter, data = decode(self.sub_socket.recv_multipart())
             if filter == 'rollout':
                 if q_workers.qsize() == q_workers._maxsize:
-                    q_workers.get()
-                q_workers.put( data )
+                    L.get(q_workers)
+                L.put(q_workers, data)
                 
             elif filter == 'stat':
                 self.stat_list.append( data )
@@ -91,8 +95,8 @@ class Manager():
         while True:
             if self.check_q( q_workers ):
                 for _ in range( self.args.batch_size ):
-                    rollout = q_workers.get()
-
+                    rollout = L.get(q_workers)
+                    
                     obs          = rollout[0]
                     action       = rollout[1]
                     reward       = rollout[2]

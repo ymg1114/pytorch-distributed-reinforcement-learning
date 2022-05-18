@@ -10,6 +10,7 @@ import torch.multiprocessing as mp
 
 from collections import deque
 from utils.utils import encode, decode
+from utils.lock import Lock
 from threading import Thread
 from torch.optim import RMSprop, Adam
 from buffers.batch_buffer import LearnerBatchStorage
@@ -23,6 +24,8 @@ def counted(f):
         return f(*args, **kwargs)
     wrapper.calls = 0
     return wrapper
+
+L = Lock()
 
 class Learner():
     def __init__(self, args, obs_shape, model):
@@ -67,8 +70,8 @@ class Learner():
             filter, data = decode(self.sub_socket.recv_multipart())
             if filter == 'rollout':
                 if self.q_workers.qsize() == self.q_workers._maxsize:
-                    self.q_workers.get()
-                self.q_workers.put( data )
+                    L.get(self.q_workers)
+                L.put(self.q_workers, data)
                 
             elif filter == 'stat':
                 self.stat_list.append( data )
@@ -226,9 +229,9 @@ class Learner():
         self.idx = 0
         
         while True:
-            if self.batch_buffer.check_q( self.q_workers ):
+            if self.batch_buffer.check_q(self.q_workers):
                 # Basically, mini-batch-learning (seq, batch, feat)
-                batch = self.batch_buffer.roll_to_batch( self.q_workers )
+                batch = self.batch_buffer.roll_to_batch(self.q_workers)
                 obs, actions, rewards, log_probs, dones, hidden_states, cell_states = batch
   
                 # epoch-learning

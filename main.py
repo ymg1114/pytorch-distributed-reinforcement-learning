@@ -153,7 +153,7 @@ if __name__ == '__main__':
         # # Deprecated
         # run( q_batchs, args, learner_model, sub_procs )
         
-        run( args, learner_model, sub_procs, *obs_shape )
+        run(args, learner_model, sub_procs, *obs_shape)
         print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
         
     finally:

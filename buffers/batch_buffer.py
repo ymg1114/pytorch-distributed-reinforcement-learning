@@ -1,6 +1,10 @@
 import torch
 import time
 
+from utils import Lock
+
+L = Lock()
+
 class LearnerBatchStorage():
     def __init__(self, args, obs_shape):
         self.args = args
@@ -54,7 +58,7 @@ class LearnerBatchStorage():
     
     def roll_to_batch(self, q_workers):
         for _ in range( self.args.batch_size ):
-            rollout = q_workers.get()
+            rollout = L.get(q_workers)
 
             obs          = rollout[0]
             action       = rollout[1]
