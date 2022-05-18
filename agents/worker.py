@@ -44,9 +44,7 @@ class Worker():
     def refresh_models(self):
         while True:
             try:
-                filter, data = self.sub_socket.recv_multipart(flags=zmq.NOBLOCK)
-                filter, data = decode(filter, data)
-
+                filter, data = decode(self.sub_socket.recv_multipart(flags=zmq.NOBLOCK))
                 if filter == 'model':
                     model_state_dict = { k: v.to('cpu') for k, v in data.items() }
                     if model_state_dict:
@@ -67,9 +65,7 @@ class Worker():
                         self.rollouts.hidden_state_roll,
                         self.rollouts.cell_state_roll
                         )
-        
-        filter, data = encode('rollout',  rollout_data)
-        self.pub_socket.send_multipart( [ filter, data ] ) 
+        self.pub_socket.send_multipart( [encode('rollout',  rollout_data)] ) 
         
     # # NO-BLOCK
     # def req_model_from_learner(self):
@@ -91,9 +87,7 @@ class Worker():
     def pub_stat_to_learner(self):
         stat = {}
         stat.update( {'epi_reward': self.epi_reward} )
-        
-        filter, data = encode('stat', stat)
-        self.pub_socket.send_multipart( [ filter, data ] )
+        self.pub_socket.send_multipart( [encode('stat', stat)] )
         
     def buffer_reset(self):
         self.rollouts.reset_list()       

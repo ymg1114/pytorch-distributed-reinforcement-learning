@@ -64,9 +64,7 @@ class Learner():
         
     def receive_data(self):
         while True:
-            filter, data = self.sub_socket.recv_multipart()
-            filter, data = decode(filter, data)
-             
+            filter, data = decode(self.sub_socket.recv_multipart())
             if filter == 'rollout':
                 if self.q_workers.qsize() == self.q_workers._maxsize:
                     self.q_workers.get()
@@ -93,10 +91,8 @@ class Learner():
         mean_stat = { k: np.mean(v) for k, v in mean_stat.items() }
         return mean_stat
 
-    def pub_model_to_workers(self, model_state_dict):
-        filter, data = encode('model',  model_state_dict)
-        
-        self.pub_socket.send_multipart( [ filter, data ] ) 
+    def pub_model_to_workers(self, model_state_dict):        
+        self.pub_socket.send_multipart( [encode('model',  model_state_dict)] ) 
 
     @counted
     def log_stat_tensorboard(self, data):

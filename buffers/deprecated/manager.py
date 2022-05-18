@@ -32,8 +32,7 @@ class Manager():
         self.pub_socket.connect( f"tcp://{local}:{self.args.learner_port}"  )
 
     def pub_batch_to_learner(self, batch):
-        _filter, _data = encode('batch', batch)
-        self.pub_socket.send_multipart( [ _filter, _data ] )
+        self.pub_socket.send_multipart( [encode('batch', batch)] )
 
     def reset_batch(self):
         self.obs_batch          = torch.zeros(self.args.seq_len+1, self.args.batch_size, *self.obs_shape)
@@ -61,9 +60,7 @@ class Manager():
     
     def receive_data(self, q_workers):
         while True:
-            filter, data = self.sub_socket.recv_multipart()
-            filter, data = decode(filter, data)
-             
+            filter, data = decode(self.sub_socket.recv_multipart())
             if filter == 'rollout':
                 if q_workers.qsize() == q_workers._maxsize:
                     q_workers.get()
@@ -73,8 +70,7 @@ class Manager():
                 self.stat_list.append( data )
                 if len( self.stat_list ) >= self.stat_log_len:
                     mean_stat = self.process_stat()
-                    _filter, _data = encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})
-                    self.pub_socket.send_multipart( [ _filter, _data ] )
+                    self.pub_socket.send_multipart( [encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})] )
                     self.stat_list = []
                     
             time.sleep(0.01)
