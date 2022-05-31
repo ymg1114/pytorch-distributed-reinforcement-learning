@@ -158,7 +158,7 @@ class ConvLSTM(nn.Module):
         else:
             raise AttributeError("The body type is not valid")
 
-        conv_out = self.convs.output_size( (h, w) )
+        conv_out = self.convs.output_size((h, w))
         self.flatten_dim = int( self.convs.output_ch * conv_out[0] * conv_out[1] )
 
         # Fully connected layers
@@ -266,9 +266,9 @@ class ConvLSTM(nn.Module):
 
         target_log_probs, target_entropy = self._forward_dist(logits, behaviour_actions) # current
 
-        target_log_probs = target_log_probs.view( seq, batch, 1 )
-        target_entropy = target_entropy.view( seq, batch, 1 )
-        target_value = target_value.view( (seq+1), batch, 1 )
+        target_log_probs = target_log_probs.view(seq, batch, 1)
+        target_entropy = target_entropy.view(seq, batch, 1)
+        target_value = target_value.view((seq+1), batch, 1)
 
         return target_log_probs, target_entropy, target_value, lstm_hxs
 
@@ -277,7 +277,7 @@ class ConvLSTM(nn.Module):
         probs = F.softmax(logits, dim=-1) # ( seq, batch, num_actions )
         dist = self.dist(probs)           # ( seq, batch, num_actions ) 
         
-        target_log_probs = dist.log_prob( behaviour_actions.squeeze(-1) ) # (seq, batch)
+        target_log_probs = dist.log_prob(behaviour_actions.squeeze(-1)) # (seq, batch)
         target_entropy = dist.entropy()                                   # (seq, batch)
         
         return target_log_probs, target_entropy
