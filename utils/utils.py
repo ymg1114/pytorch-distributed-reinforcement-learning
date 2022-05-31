@@ -40,10 +40,10 @@ def obs_preprocess(obs, need_conv):
         # obs = cv2.cvtColor(obs, cv2.COLOR_BGRA2RGB)    
         obs = cv2.resize(obs, dsize=(p.H, p.W), interpolation=cv2.INTER_AREA)
         # obs = obs.transpose( (2, 0, 1) )
-        return transform( obs ).unsqueeze(0).to(torch.float32) # (H, W, C) -> (1, C, H, W)
+        return transform(obs).unsqueeze(0).to(torch.float32) # (H, W, C) -> (1, C, H, W)
     
     else:
-        return torch.from_numpy( obs ).unsqueeze(0).to(torch.float32) # (D) -> (1, D)
+        return torch.from_numpy(obs).unsqueeze(0).to(torch.float32) # (D) -> (1, D)
 
 class ParameterServer():
     def __init__(self, lock):
@@ -83,8 +83,8 @@ class ParameterServer():
 #             pass
         
 def kill_processes():
-    WORKER_PORTS = [ p.worker_port ]
-    LEARNER_PORTS = [ p.learner_port, p.learner_port+1  ]
+    WORKER_PORTS = [p.worker_port]
+    LEARNER_PORTS = [p.learner_port, p.learner_port+1]
     
     for proc in process_iter():
         for conns in proc.connections(kind='inet'):
@@ -101,10 +101,10 @@ def kill_processes():
     parent.kill()    
         
 def encode(filter, data):
-    return pickle.dumps( filter ), blosc2.compress( pickle.dumps(data), clevel=1, cname='zstd')
+    return pickle.dumps(filter), blosc2.compress(pickle.dumps(data), clevel=1, cname='zstd')
 
 def decode(filter, data):
-    return pickle.loads( filter ), pickle.loads( blosc2.decompress(data) )
+    return pickle.loads(filter), pickle.loads(blosc2.decompress(data))
 
 if __name__ == "__main__":
     kill_processes()

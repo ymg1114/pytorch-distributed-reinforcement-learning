@@ -116,10 +116,10 @@ if __name__ == '__main__':
         
         if args.need_conv or len(env.observation_space.shape) > 1:
             M = __import__("networks.models", fromlist=[None]).ConvLSTM
-            obs_shape = [ p.H, p.W, env.observation_space.shape[2] ]
+            obs_shape = [p.H, p.W, env.observation_space.shape[2]]
         else:
             M = __import__("networks.models", fromlist=[None]).MlpLSTM
-            obs_shape = [ env.observation_space.shape[0] ]
+            obs_shape = [env.observation_space.shape[0]]
         env.close()
         
         q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker (manager)
@@ -157,4 +157,4 @@ if __name__ == '__main__':
     finally:
         pass
         # kill_processes()
-        # [ p.join() for p in sub_procs ]
+        # [p.join() for p in sub_procs]
