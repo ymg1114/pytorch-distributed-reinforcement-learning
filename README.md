@@ -1,2 +1,2 @@
-# pytorch-IMPALA
-pytorch IMPALA
+# pytorch-distributed-ppo
+pytorch-distributed-ppo
