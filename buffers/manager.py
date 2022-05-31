@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 from utils.utils import encode, decode
-from utils import Lock
+from utils.lock import Lock
 from threading import Thread
 
 local = "127.0.0.1"
@@ -16,6 +16,7 @@ class Manager():
     def __init__(self, args, worker_port, obs_shape):
         self.args = args
         self.obs_shape = obs_shape
+        # self.device = self.args.device
         self.device = torch.device('cpu')
         
         self.stat_list = []
@@ -36,8 +37,9 @@ class Manager():
         self.pub_socket.connect(f"tcp://{local}:{self.args.learner_port}")
 
     def pub_batch_to_learner(self, batch):
-        self.pub_socket.send_multipart([encode('batch', batch)])
-
+        self.pub_socket.send_multipart([*encode('batch', batch)])
+        # print("pub batch to learner!")
+        
     def reset_batch(self):
         self.obs_batch          = torch.zeros(self.args.seq_len+1, self.args.batch_size, *self.obs_shape)
         # self.action_batch       = torch.zeros(self.args.seq_len, self.args.batch_size, self.n_outputs) # one-hot
@@ -64,17 +66,17 @@ class Manager():
     
     def receive_data(self, q_workers):
         while True:
-            filter, data = decode(self.sub_socket.recv_multipart())
+            filter, data = decode(*self.sub_socket.recv_multipart())
             if filter == 'rollout':
                 if q_workers.qsize() == q_workers._maxsize:
                     L.get(q_workers)
                 L.put(q_workers, data)
                 
             elif filter == 'stat':
-                self.stat_list.append( data )
+                self.stat_list.append(data)
                 if len(self.stat_list) >= self.stat_log_len:
                     mean_stat = self.process_stat()
-                    self.pub_socket.send_multipart([encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})])
+                    self.pub_socket.send_multipart([*encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})])
                     self.stat_list = []
                     
             time.sleep(0.01)
@@ -96,7 +98,7 @@ class Manager():
             if self.check_q(q_workers):
                 for _ in range(self.args.batch_size):
                     rollout = L.get(q_workers)
-                    
+
                     obs          = rollout[0]
                     action       = rollout[1]
                     reward       = rollout[2]

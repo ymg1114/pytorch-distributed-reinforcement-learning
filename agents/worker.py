@@ -44,7 +44,7 @@ class Worker():
     def refresh_models(self):
         while True:
             try:
-                filter, data = decode(self.sub_socket.recv_multipart(flags=zmq.NOBLOCK))
+                filter, data = decode(*self.sub_socket.recv_multipart(flags=zmq.NOBLOCK))
                 if filter == 'model':
                     model_state_dict = {k: v.to('cpu') for k, v in data.items()}
                     if model_state_dict:
@@ -65,7 +65,8 @@ class Worker():
                         self.rollouts.hidden_state_roll,
                         self.rollouts.cell_state_roll
                         )
-        self.pub_socket.send_multipart([encode('rollout',  rollout_data)]) 
+        self.pub_socket.send_multipart([*encode('rollout',  rollout_data)]) 
+        # print(f"worker_name: {self.worker_name} pub rollout to manager!")
         
     # # NO-BLOCK
     # def req_model_from_learner(self):
@@ -73,7 +74,7 @@ class Worker():
     #         model_state_dict = self.sub_socket.recv_pyobj(flags=zmq.NOBLOCK)
     #         if model_state_dict:
     #             self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
-    #             # print( f'{self.worker_name}: Received fresh model from learner !' )
+    #             # print( f'{self.worker_name}: Received fresh model from learner!' )
     #     except zmq.Again as e:
     #         # print("No model-weight received yet")
     #         pass
@@ -87,7 +88,7 @@ class Worker():
     def pub_stat_to_manager(self):
         stat = {}
         stat.update({'epi_reward': self.epi_reward})
-        self.pub_socket.send_multipart([encode('stat', stat)])
+        self.pub_socket.send_multipart([*encode('stat', stat)])
         
     def buffer_reset(self):
         self.rollouts.reset_list()       
@@ -101,8 +102,8 @@ class Worker():
         env = gym.make(self.args.env)
         
         while True:    
-            obs = env.reset()
-            obs = obs_preprocess(obs, self.args.need_conv)
+            obs = obs_preprocess(env.reset(), self.args.need_conv)
+            # print(f"worker_name: {self.worker_name}, obs: {obs}")
             lstm_hidden_state = (torch.zeros((1, 1, self.args.hidden_size)), torch.zeros((1, 1, self.args.hidden_size))) # (h_s, c_s) / (seq, batch, hidden)
             self.epi_reward = 0
             
@@ -117,7 +118,7 @@ class Worker():
                 
                 self.epi_reward += reward
                 # reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
-                _done = torch.FloatTensor( [ [1.0] if done else [0.0] ] )
+                _done = torch.FloatTensor([[1.0] if done else [0.0]])
 
                 self.rollouts.insert(obs,                        # (1, c, h, w) or (1, D)
                                      action.view(1, -1),         # (1, 1) / not one-hot, but action index

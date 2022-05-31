@@ -28,19 +28,22 @@ def counted(f):
 L = Lock()
 
 class Learner():
-    def __init__(self, args, obs_shape, model):
-        self.args = args        
-        self.model = model.to( args.device )
+    def __init__(self, args, model):
+        self.args = args   
+        self.device = self.args.device     
+        self.model = model.to(args.device)
         # self.model.share_memory() # make other processes can assess
         # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
         self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
         
-        # self.rho = nn.Parameter( torch.tensor(args.rho_hat, dtype=torch.float), requires_grad=False )
-        # self.cis = nn.Parameter( torch.tensor(args.cis_hat, dtype=torch.float), requires_grad=False )
-        
         # self.q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker-rollout 
-        # self.batch_buffer = LearnerBatchStorage( args, obs_shape )
-
+        # self.batch_buffer = LearnerBatchStorage(args, obs_shape)
+        
+        def make_gpu_batch(*args):
+            to_gpu = lambda tensor: tensor.to(self.device)
+            return tuple(map(to_gpu, args))
+        self.make_gpu_batch = make_gpu_batch
+        
         self.stat_list = []
         self.stat_log_len = 20
         self.zeromq_set()
@@ -61,20 +64,18 @@ class Learner():
     def sub_data_from_manager_Thread(self, q_batchs):
         self.l_t = Thread(target=self.receive_data, args=(q_batchs,))
         self.l_t.daemon = True 
-        # self.l_t.start()
-        
-        return self.l_t
-        
+        self.l_t.start()
+                
     def receive_data(self, q_batchs):
         while True:
-            filter, data = decode(self.sub_socket.recv_multipart())
+            filter, data = decode(*self.sub_socket.recv_multipart())
             if filter == 'batch':
                 if q_batchs.qsize() == q_batchs._maxsize:
                     L.get(q_batchs)
                 L.put(q_batchs, data)
-                
+             
             elif filter == 'stat':
-                self.stat_list.append(data)
+                self.stat_list.append(data["mean_stat"])
                 if len(self.stat_list) >= self.stat_log_len:
                     mean_stat = self.process_stat()
                     self.log_stat_tensorboard({"log_len": self.stat_log_len, "mean_stat": mean_stat})
@@ -95,7 +96,7 @@ class Learner():
         return mean_stat
 
     def pub_model_to_workers(self, model_state_dict):        
-        self.pub_socket.send_multipart( [encode('model',  model_state_dict)] ) 
+        self.pub_socket.send_multipart([*encode('model',  model_state_dict)]) 
 
     @counted
     def log_stat_tensorboard(self, data):
@@ -103,7 +104,7 @@ class Learner():
         data_dict = data['mean_stat']
         
         for k, v in data_dict.items():
-            tag = f'worker/{len}-game-mean-stat-of-[{k}]'
+            tag = f'worker/{len}-game-mean-stat-of-{k}'
             # x = self.idx
             x = self.log_stat_tensorboard.calls * len # global game counts
             y = v
@@ -115,7 +116,7 @@ class Learner():
         self.writer.add_scalar('original-value-loss', detached_losses["value-loss"], self.idx)
         self.writer.add_scalar('original-policy-loss', detached_losses["policy-loss"], self.idx)
         self.writer.add_scalar('original-policy-entropy', detached_losses["policy-entropy"], self.idx)
-        
+            
     # PPO
     def learning(self, q_batchs):
         self.idx = 0
@@ -123,16 +124,16 @@ class Learner():
         while True:
             if q_batchs.qsize() > 0:
                 # Basically, mini-batch-learning (seq, batch, feat)
-                obs, actions, rewards, log_probs, dones, hidden_states, cell_states = L.get(q_batchs)
+                obs, actions, rewards, log_probs, dones, hidden_states, cell_states = self.make_gpu_batch(*L.get(q_batchs))
   
                 # epoch-learning
                 for _ in range(self.args.K_epoch):
                     lstm_states = (hidden_states, cell_states) 
                     
                     # on-line model forwarding
-                    target_log_probs, target_entropy, target_value, lstm_states = self.model( obs,         # (seq+1, batch, c, h, w)
-                                                                                              lstm_states, # ( (1, batch, hidden_size), (1, batch, hidden_size) )
-                                                                                              actions )    # (seq, batch, 1)            
+                    target_log_probs, target_entropy, target_value, lstm_states = self.model(obs,         # (seq+1, batch, c, h, w)
+                                                                                             lstm_states, # ((1, batch, hidden_size), (1, batch, hidden_size))
+                                                                                             actions)     # (seq, batch, 1)            
                     # masking
                     mask = 1 - dones * torch.roll(dones, 1, 0)
                     mask_next = 1 - dones
@@ -159,7 +160,7 @@ class Learner():
                         advantages.append(advantage_t)
                     advantages.reverse()
                     # advantage = torch.stack(advantages, dim=0).to(torch.float)
-                    advantage = torch.tensor(advantages, dtype=torch.float).to( self.args.device )
+                    advantage = torch.tensor(advantages, dtype=torch.float).to(self.device)
 
                     ratio = torch.exp(target_log_probs - log_probs)  # a/b == log(exp(a)-exp(b))
                     surr1 = ratio * advantage
@@ -185,7 +186,7 @@ class Learner():
                     print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
                     self.optimizer.step()
                     
-                self.pub_model_to_workers( self.model.state_dict() )
+                self.pub_model_to_workers(self.model.state_dict())
                 
                 if (self.idx % self.args.loss_log_interval == 0):
                     self.log_loss_tensorboard(loss, detached_losses)
@@ -194,5 +195,3 @@ class Learner():
                     torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"))
                 
                 self.idx+= 1
-                
-            # time.sleep(0.01)

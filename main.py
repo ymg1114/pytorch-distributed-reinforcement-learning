@@ -74,10 +74,7 @@ if __name__ == '__main__':
     parser.add_argument('--eps-clip', type=float, default=p.eps_clip)
     
     parser.add_argument('--time-horizon', type=int, default=p.time_horizon)
-    
-    parser.add_argument('--cis-hat', type=float, default=p.cis_hat)
-    parser.add_argument('--rho-hat', type=float, default=p.rho_hat)
-    
+        
     parser.add_argument('--policy-loss-coef', type=float, default=p.policy_loss_coef)
     parser.add_argument('--value-loss-coef', type=float, default=p.value_loss_coef)
     parser.add_argument('--entropy-coef', type=float, default=p.entropy_coef)
@@ -97,7 +94,7 @@ if __name__ == '__main__':
     print(f"device: {args.device}")
     
     try:
-        mp.set_start_method('spawn')
+        # mp.set_start_method('spawn')
         print("spawn init")
         
         dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
@@ -157,4 +154,3 @@ if __name__ == '__main__':
     finally:
         pass
         # kill_processes()
-        # [p.join() for p in sub_procs]

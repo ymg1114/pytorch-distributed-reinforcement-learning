@@ -22,7 +22,7 @@ class Flatten(nn.Module):
         super(Flatten, self).__init__()
 
     def forward(self, x):
-        return x.view( x.size(0), -1 )
+        return x.view(x.size(0), -1)
 
 
 class ResidualBlock(nn.Module):
@@ -252,9 +252,9 @@ class ConvLSTM(nn.Module):
         seq, batch, *d = obs.size() 
         seq -= 1
         
-        obs = obs.contiguous().view( (seq+1) * batch, *d )
+        obs = obs.contiguous().view((seq+1) * batch, *d)
         x = self.body.forward(obs)
-        x = x.view( (seq+1), batch, self.hidden_size ) # (seq+1, batch, hidden_size)
+        x = x.view((seq+1), batch, self.hidden_size) # (seq+1, batch, hidden_size)
 
         x, lstm_hxs = self.lstm(x, lstm_hxs)
         lstm_hxs[0].detach_()

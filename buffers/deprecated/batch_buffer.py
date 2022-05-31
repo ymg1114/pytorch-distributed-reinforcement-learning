@@ -1,7 +1,7 @@
 import torch
 import time
 
-from utils import Lock
+from utils.lock import Lock
 
 L = Lock()
 

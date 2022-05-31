@@ -5,7 +5,7 @@
     "h": 84,
     "w": 84,
     "gray": false,
-    "hidden_size": 64,
+    "hidden_size": 32,
 
     "time_horizon": 500,
     "repeat_actions": 4,
@@ -17,8 +17,6 @@
     "gamma": 0.99,
     "lmbda": 0.95,
     "eps_clip": 0.1,
-    "cis_hat": 1,
-    "rho_hat": 1,
 
     "policy_loss_coef": 1,
     "value_loss_coef": 0.5,
@@ -32,7 +30,7 @@
     "model_save_interval": 100,
     "gpu_idx": 0,
 
-    "num_worker": 30,
-    "worker_port": 2226,
-    "learner_port": 4226
+    "num_worker": 10,
+    "worker_port": 2716,
+    "learner_port": 4716
 }
