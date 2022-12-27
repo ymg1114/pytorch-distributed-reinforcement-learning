@@ -7,7 +7,7 @@ import torch
 import numpy as np
 
 from threading import Thread
-from utils.utils import encode, decode
+from utils.utils import Protocol, encode, decode
 from utils.utils import obs_preprocess, ParameterServer
 from buffers.rollout_buffer import WorkerRolloutStorage
 from tensorboardX import SummaryWriter
@@ -36,7 +36,7 @@ class Worker():
         self.sub_socket.connect(f"tcp://{local}:{self.args.learner_port+1}") # subscribe fresh learner-model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
     
-    def sub_model_from_learner_Thread(self):
+    def model_subscriber(self):
         self.w_t = Thread(target=self.refresh_models)
         self.w_t.daemon = True 
         self.w_t.start()
@@ -44,8 +44,8 @@ class Worker():
     def refresh_models(self):
         while True:
             try:
-                filter, data = decode(*self.sub_socket.recv_multipart(flags=zmq.NOBLOCK))
-                if filter == 'model':
+                protocol, data = decode(*self.sub_socket.recv_multipart(flags=zmq.NOBLOCK))
+                if protocol is Protocol.Model:
                     model_state_dict = {k: v.to('cpu') for k, v in data.items()}
                     if model_state_dict:
                         self.model.load_state_dict(model_state_dict)  # reload learned-model from learner
@@ -65,7 +65,7 @@ class Worker():
                         self.rollouts.hidden_state_roll,
                         self.rollouts.cell_state_roll
                         )
-        self.pub_socket.send_multipart([*encode('rollout',  rollout_data)]) 
+        self.pub_socket.send_multipart([*encode(Protocol.Rollout,  rollout_data)]) 
         # print(f"worker_name: {self.worker_name} pub rollout to manager!")
         
     # # NO-BLOCK
@@ -88,7 +88,7 @@ class Worker():
     def pub_stat_to_manager(self):
         stat = {}
         stat.update({'epi_reward': self.epi_reward})
-        self.pub_socket.send_multipart([*encode('stat', stat)])
+        self.pub_socket.send_multipart([*encode(Protocol.Stat, stat)])
         
     def buffer_reset(self):
         self.rollouts.reset_list()       

@@ -1,5 +1,6 @@
-import torch.multiprocessing as mp
 from contextlib import contextmanager
+
+import torch.multiprocessing as mp
 
 
 class Lock:
@@ -14,6 +15,7 @@ class Lock:
             yield
         finally:
             self._lock.release()
+        return
     
     def get(self, queue):
         with self.lock():
@@ -23,3 +25,4 @@ class Lock:
     def put(self, queue, data):
         with self.lock():
             queue.put(data)
+        return

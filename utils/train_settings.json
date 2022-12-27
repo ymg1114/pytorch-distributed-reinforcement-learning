@@ -1,6 +1,6 @@
 
 {
-    // "Target_env": "SpaceInvaders-v0",
+    // "env": "SpaceInvaders-v0",
 
     // "H": 84,
     // "W": 84,

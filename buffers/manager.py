@@ -3,7 +3,7 @@ import zmq
 import time
 import numpy as np
 
-from utils.utils import encode, decode
+from utils.utils import Protocol, encode, decode
 from utils.lock import Lock
 from threading import Thread
 
@@ -37,7 +37,7 @@ class Manager():
         self.pub_socket.connect(f"tcp://{local}:{self.args.learner_port}")
 
     def pub_batch_to_learner(self, batch):
-        self.pub_socket.send_multipart([*encode('batch', batch)])
+        self.pub_socket.send_multipart([*encode(Protocol.Batch, batch)])
         # print("pub batch to learner!")
         
     def reset_batch(self):
@@ -59,26 +59,28 @@ class Manager():
         else:
             return False
         
-    def sub_data_from_workers_Thread(self, q_workers):
+    def data_subscriber(self, q_workers):
         self.m_t = Thread(target=self.receive_data, args=(q_workers,))
         self.m_t.daemon = True 
         self.m_t.start()
-    
+
     def receive_data(self, q_workers):
         while True:
-            filter, data = decode(*self.sub_socket.recv_multipart())
-            if filter == 'rollout':
+            protocol, data = decode(*self.sub_socket.recv_multipart())
+            if protocol is Protocol.Rollout:
                 if q_workers.qsize() == q_workers._maxsize:
                     L.get(q_workers)
                 L.put(q_workers, data)
                 
-            elif filter == 'stat':
+            elif protocol is Protocol.Stat:
                 self.stat_list.append(data)
                 if len(self.stat_list) >= self.stat_log_len:
                     mean_stat = self.process_stat()
-                    self.pub_socket.send_multipart([*encode('stat', {"log_len": self.stat_log_len, "mean_stat": mean_stat})])
+                    self.pub_socket.send_multipart([*encode(Protocol.Stat, {"log_len": self.stat_log_len, "mean_stat": mean_stat})])
                     self.stat_list = []
-                    
+            else:
+                assert False, f"Wrong protocol: {protocol}"
+                
             time.sleep(0.01)
             
     def process_stat(self):

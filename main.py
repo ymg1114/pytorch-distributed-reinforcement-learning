@@ -3,6 +3,7 @@ import argparse
 import gym
 import json
 import torch
+import traceback
 import numpy as np
 import torch.multiprocessing as mp
 
@@ -15,18 +16,20 @@ from agents.worker import Worker
 from buffers.manager import Manager
 
 from threading import Thread
-from utils.utils import ParameterServer, kill_processes
+from utils.utils import KillProcesses, SaveErrorLog, Params
 
         
 def worker_run(args, model, worker_name, port, *obs_shape):
     worker = Worker(args, model, worker_name, port, obs_shape)
-    worker.sub_model_from_learner_Thread()
+    worker.model_subscriber()
     worker.collect_rolloutdata() # collect rollout-data (multi-workers)
+    
     
 def manager_run(q_workers, args, *obs_shape):
     manager = Manager(args, args.worker_port, obs_shape)
-    manager.sub_data_from_workers_Thread(q_workers) # received rollout-data/stat from workers
+    manager.data_subscriber(q_workers) # received rollout-data/stat from workers
     manager.make_batch(q_workers)            # make_batch & send batch-data to learner
+
 
 def run(q_batchs, args, learner_model, sub_procs):
     [p.start() for p in sub_procs]
@@ -35,10 +38,11 @@ def run(q_batchs, args, learner_model, sub_procs):
     learner.learning(q_batchs)              # main-process
     [p.join() for p in sub_procs]
 
+
 # # manager가 없는 버전에서 사용했었음
 # def run(args, learner_model, sub_procs, *obs_shape):
 #     learner = Learner(args, obs_shape, learner_model)
-#     t1 = learner.sub_data_from_workers_Thread() # main-process (sub-thread)
+#     t1 = learner.data_subscriber() # main-process (sub-thread)
 #     sub_procs.append( t1 )
     
 #     [p.start() for p in sub_procs]
@@ -46,13 +50,9 @@ def run(q_batchs, args, learner_model, sub_procs):
 
 
 if __name__ == '__main__':    
-    utils = os.path.join(os.getcwd(), "utils", 'parameters.json')
-    with open( utils ) as f:
-        p = json.load(f)
-        p = SimpleNamespace(**p)
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default=p.target_env)
+    p = Params
+    parser.add_argument('--env', type=str, default=p.env)
     
     parser.add_argument('--need-conv', type=bool, default=p.need_conv)
     parser.add_argument('--width', type=int, default=p.w)
@@ -94,8 +94,8 @@ if __name__ == '__main__':
     print(f"device: {args.device}")
     
     try:
-        # mp.set_start_method('spawn')
-        print("spawn init")
+        mp.set_start_method("spawn")
+        print("spawn init method run")
         
         dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
         args.result_dir = os.path.join('results', str(dt_string))
@@ -150,7 +150,13 @@ if __name__ == '__main__':
         # manager가 없는 버전에서 사용했었음
         # run(args, learner_model, sub_procs, *obs_shape)
         print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
+    
+    except:
+        log_dir = os.path.join(os.getcwd(), "logs")
+        if not os.path.isdir(log_dir):
+            os.makedirs(log_dir)
+        err = traceback.format_exc(limit=128)
+        SaveErrorLog(err, log_dir)
         
     finally:
-        pass
-        # kill_processes()
+        KillProcesses(os.getpid())

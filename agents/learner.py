@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import torch.multiprocessing as mp
 
 from collections import deque
-from utils.utils import encode, decode
+from utils.utils import Protocol, encode, decode
 from utils.lock import Lock
 from threading import Thread
 from torch.optim import RMSprop, Adam
@@ -68,19 +68,21 @@ class Learner():
                 
     def receive_data(self, q_batchs):
         while True:
-            filter, data = decode(*self.sub_socket.recv_multipart())
-            if filter == 'batch':
+            protocol, data = decode(*self.sub_socket.recv_multipart())
+            if protocol is Protocol.Batch:
                 if q_batchs.qsize() == q_batchs._maxsize:
                     L.get(q_batchs)
                 L.put(q_batchs, data)
-             
-            elif filter == 'stat':
+
+            elif protocol is Protocol.Stat:
                 self.stat_list.append(data["mean_stat"])
                 if len(self.stat_list) >= self.stat_log_len:
                     mean_stat = self.process_stat()
                     self.log_stat_tensorboard({"log_len": self.stat_log_len, "mean_stat": mean_stat})
                     self.stat_list = []
-                    
+            else:
+                assert False, f"Wrong protocol: {protocol}"
+                
             time.sleep(0.01)
 
     def process_stat(self):
@@ -96,7 +98,7 @@ class Learner():
         return mean_stat
 
     def pub_model_to_workers(self, model_state_dict):        
-        self.pub_socket.send_multipart([*encode('model',  model_state_dict)]) 
+        self.pub_socket.send_multipart([*encode(Protocol.Model,  model_state_dict)]) 
 
     @counted
     def log_stat_tensorboard(self, data):
