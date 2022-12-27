@@ -27,7 +27,7 @@ class WorkerRolloutStorage():
         self.dones.append(done.to(self.device))            # (1, 1)
         
         lstm_hidden_state = (lstm_hidden_state[0].to(self.device), lstm_hidden_state[1].to(self.device)) 
-        self.lstm_hidden_states.append(lstm_hidden_state)  # ( (1, 1, d_h), (1, 1, d_c) )
+        self.lstm_hidden_states.append(lstm_hidden_state)  # ((1, 1, d_h), (1, 1, d_c))
         
         self.size += 1
          

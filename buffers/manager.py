@@ -33,7 +33,7 @@ class Manager():
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
 
         # manager <-> learner
-        self.pub_socket = context.socket( zmq.PUB ) # publish batch-data, stat-data
+        self.pub_socket = context.socket(zmq.PUB) # publish batch-data, stat-data
         self.pub_socket.connect(f"tcp://{local}:{self.args.learner_port}")
 
     def pub_batch_to_learner(self, batch):
@@ -60,8 +60,7 @@ class Manager():
             return False
         
     def data_subscriber(self, q_workers):
-        self.m_t = Thread(target=self.receive_data, args=(q_workers,))
-        self.m_t.daemon = True 
+        self.m_t = Thread(target=self.receive_data, args=(q_workers,), daemon=True)
         self.m_t.start()
 
     def receive_data(self, q_workers):
@@ -130,14 +129,15 @@ class Manager():
     def produce_batch(self):
         o, a, r, log_p, done, h_s, c_s = self.get_batch()
 
-        batch = (o.to(self.device), 
-                 a.to(self.device), 
-                 r.to(self.device), 
-                 log_p.to(self.device), 
-                 done.to(self.device), 
-                 h_s.to(self.device), 
-                 c_s.to(self.device)
-                )
+        batch = (
+            o.to(self.device), 
+            a.to(self.device), 
+            r.to(self.device), 
+            log_p.to(self.device), 
+            done.to(self.device), 
+            h_s.to(self.device), 
+            c_s.to(self.device)
+            )
         self.pub_batch_to_learner(batch)
         
     # def get_batch(self):

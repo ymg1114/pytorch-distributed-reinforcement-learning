@@ -21,7 +21,7 @@ from utils.utils import KillProcesses, SaveErrorLog, Params
         
 def worker_run(args, model, worker_name, port, *obs_shape):
     worker = Worker(args, model, worker_name, port, obs_shape)
-    worker.model_subscriber()
+    # worker.model_subscriber()
     worker.collect_rolloutdata() # collect rollout-data (multi-workers)
     
     
@@ -31,21 +31,21 @@ def manager_run(q_workers, args, *obs_shape):
     manager.make_batch(q_workers)            # make_batch & send batch-data to learner
 
 
-def run(q_batchs, args, learner_model, sub_procs):
-    [p.start() for p in sub_procs]
+def run(q_batchs, args, learner_model, child_procs):
+    [p.start() for p in child_procs]
     learner = Learner(args, learner_model)
-    learner.sub_data_from_manager_Thread(q_batchs) # main-process (sub-thread)
+    learner.data_subscriber(q_batchs) # main-process (sub-thread)
     learner.learning(q_batchs)              # main-process
-    [p.join() for p in sub_procs]
+    [p.join() for p in child_procs]
 
 
 # # manager가 없는 버전에서 사용했었음
-# def run(args, learner_model, sub_procs, *obs_shape):
+# def run(args, learner_model, child_procs, *obs_shape):
 #     learner = Learner(args, obs_shape, learner_model)
 #     t1 = learner.data_subscriber() # main-process (sub-thread)
-#     sub_procs.append( t1 )
+#     child_procs.append(t1)
     
-#     [p.start() for p in sub_procs]
+#     [p.start() for p in child_procs]
 #     learner.learning()                          # main-process
 
 
@@ -122,11 +122,10 @@ if __name__ == '__main__':
         q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker (manager)
         q_batchs = mp.Queue(maxsize=1024) # q for learner
         
-        sub_procs = []
-        
-        m = mp.Process(target=manager_run, args=(q_workers, args, *obs_shape)) # sub-processes
-        m.daemon = True  # daemonic process is not allowed to create child process
-        sub_procs.append(m)
+        child_procs = []
+        # daemonic process is not allowed to create child process
+        m = mp.Process(target=manager_run, args=(q_workers, args, *obs_shape), daemon=True) # child-processes
+        child_procs.append(m)
         
         learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
         learner_model.to(args.device)
@@ -141,14 +140,14 @@ if __name__ == '__main__':
             worker_model.load_state_dict(learner_model_state_dict)
             
             worker_name = 'worker_' + str(i)
-            w = mp.Process(target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape)) # sub-processes
-            w.daemon = True  # daemonic process is not allowed to create child process
-            sub_procs.append(w)
+            # daemonic process is not allowed to create child process
+            w = mp.Process(target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape), daemon=True) # child-processes
+            child_procs.append(w)
         
-        run(q_batchs, args, learner_model, sub_procs)
+        run(q_batchs, args, learner_model, child_procs)
         
         # manager가 없는 버전에서 사용했었음
-        # run(args, learner_model, sub_procs, *obs_shape)
+        # run(args, learner_model, child_procs, *obs_shape)
         print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
     
     except:

@@ -61,9 +61,8 @@ class Learner():
         self.pub_socket = context.socket(zmq.PUB)
         self.pub_socket.bind(f"tcp://{local}:{self.args.learner_port+1}") # publish fresh learner-model
 
-    def sub_data_from_manager_Thread(self, q_batchs):
-        self.l_t = Thread(target=self.receive_data, args=(q_batchs,))
-        self.l_t.daemon = True 
+    def data_subscriber(self, q_batchs):
+        self.l_t = Thread(target=self.receive_data, args=(q_batchs,), daemon=True)
         self.l_t.start()
                 
     def receive_data(self, q_batchs):
@@ -133,9 +132,12 @@ class Learner():
                     lstm_states = (hidden_states, cell_states) 
                     
                     # on-line model forwarding
-                    target_log_probs, target_entropy, target_value, lstm_states = self.model(obs,         # (seq+1, batch, c, h, w)
-                                                                                             lstm_states, # ((1, batch, hidden_size), (1, batch, hidden_size))
-                                                                                             actions)     # (seq, batch, 1)            
+                    target_log_probs, target_entropy, target_value, lstm_states = self.model(
+                        obs,         # (seq+1, batch, c, h, w)
+                        lstm_states, # ((1, batch, hidden_size), (1, batch, hidden_size))
+                        actions
+                        )     # (seq, batch, 1)         
+                       
                     # masking
                     mask = 1 - dones * torch.roll(dones, 1, 0)
                     mask_next = 1 - dones
