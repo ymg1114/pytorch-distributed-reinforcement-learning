@@ -130,7 +130,8 @@ class Worker():
                     next_obs,                   # (1, c, h, w) or (1, D)
                     log_prob.view(1, -1),       # (1, 1)               
                     _done,                      # (1, 1)
-                    lstm_hidden_state)          # (h_s, c_s) / (seq, batch, hidden)
+                    lstm_hidden_state           # (h_s, c_s) / (seq, batch, hidden)
+                    )
                 
                 obs = next_obs                                   # (1, c, h, w) or (1, D)
                 lstm_hidden_state = next_lstm_hidden_state       # ( (1, 1, d_h), (1, 1, d_c) )
