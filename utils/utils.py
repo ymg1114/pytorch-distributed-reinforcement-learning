@@ -26,6 +26,12 @@ with open(utils) as f:
 # def str2bool(v):
 #       return v.lower() in ("yes", "Yes", "true", "True, "T", t", "1")
     
+def mul(*args):
+    _val = 1.0
+    for e in args:
+        _val *= e
+    return _val
+    
         
 def SaveErrorLog(error: str, log_dir: str):
     current_time = time.strftime("[%Y_%m_%d][%H_%M_%S]", time.localtime(time.time()))
@@ -76,7 +82,6 @@ class ParameterServer():
             
             
 class Protocol(Enum):
-    Batch = auto()
     Model = auto()
     Rollout = auto()
     Stat = auto()

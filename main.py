@@ -4,15 +4,18 @@ import gym
 import json
 import torch
 import traceback
+import asyncio
 import numpy as np
-import torch.multiprocessing as mp
+import multiprocessing as mp
 
+from multiprocessing import Process, Semaphore, Pipe, Queue, set_start_method
 from datetime import datetime
 from copy import deepcopy
 from types import SimpleNamespace
 
 from agents.learner import Learner
 from agents.worker import Worker
+from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
 from threading import Thread
@@ -21,32 +24,24 @@ from utils.utils import KillProcesses, SaveErrorLog, Params
         
 def worker_run(args, model, worker_name, port, *obs_shape):
     worker = Worker(args, model, worker_name, port, obs_shape)
-    # worker.model_subscriber()
-    worker.collect_rolloutdata() # collect rollout-data (multi-workers)
+    worker.collect_rolloutdata() # collect rollout
     
     
-def manager_run(q_workers, args, *obs_shape):
+def manager_run(args, *obs_shape):
     manager = Manager(args, args.worker_port, obs_shape)
-    manager.data_subscriber(q_workers) # received rollout-data/stat from workers
-    manager.make_batch(q_workers)            # make_batch & send batch-data to learner
+    asyncio.run(manager.data_chain())
 
 
-def run(q_batchs, args, learner_model, child_procs):
+def storage_run(args, sam, src_conn, *obs_shape):
+    storage = LearnerStorage(args, sam, src_conn, obs_shape)
+    storage.set_data_to_shared_memory()
+
+
+def run(args, sam, dst_conn, learner_model, child_procs):
     [p.start() for p in child_procs]
-    learner = Learner(args, learner_model)
-    learner.data_subscriber(q_batchs) # main-process (sub-thread)
-    learner.learning(q_batchs)              # main-process
+    learner = Learner(args, sam, dst_conn, learner_model)
+    learner.learning()              
     [p.join() for p in child_procs]
-
-
-# # manager가 없는 버전에서 사용했었음
-# def run(args, learner_model, child_procs, *obs_shape):
-#     learner = Learner(args, obs_shape, learner_model)
-#     t1 = learner.data_subscriber() # main-process (sub-thread)
-#     child_procs.append(t1)
-    
-#     [p.start() for p in child_procs]
-#     learner.learning()                          # main-process
 
 
 if __name__ == '__main__':    
@@ -94,7 +89,7 @@ if __name__ == '__main__':
     print(f"device: {args.device}")
     
     try:
-        mp.set_start_method("spawn")
+        set_start_method("spawn")
         print("spawn init method run")
         
         dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
@@ -119,12 +114,12 @@ if __name__ == '__main__':
             obs_shape = [env.observation_space.shape[0]]
         env.close()
         
-        q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker (manager)
-        q_batchs = mp.Queue(maxsize=1024) # q for learner
+        src_conn, dst_conn = Pipe()
+        sam = Semaphore(1) # 동시 접근 허용 프로세스 1개
         
         child_procs = []
         # daemonic process is not allowed to create child process
-        m = mp.Process(target=manager_run, args=(q_workers, args, *obs_shape), daemon=True) # child-processes
+        m = Process(target=manager_run, args=(args, *obs_shape), daemon=True) # child-processes
         child_procs.append(m)
         
         learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
@@ -141,15 +136,14 @@ if __name__ == '__main__':
             
             worker_name = 'worker_' + str(i)
             # daemonic process is not allowed to create child process
-            w = mp.Process(target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape), daemon=True) # child-processes
+            w = Process(target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape), daemon=True) # child-processes
             child_procs.append(w)
+            
+        m = Process(target=storage_run, args=(args, sam, src_conn, *obs_shape), daemon=True) # child-processes
+        child_procs.append(m)
         
-        run(q_batchs, args, learner_model, child_procs)
-        
-        # manager가 없는 버전에서 사용했었음
-        # run(args, learner_model, child_procs, *obs_shape)
-        print(f"Run processes -> num_learner: 1, num_worker: {args.num_worker}")
-    
+        run(args, sam, dst_conn, learner_model, child_procs)
+            
     except:
         log_dir = os.path.join(os.getcwd(), "logs")
         if not os.path.isdir(log_dir):

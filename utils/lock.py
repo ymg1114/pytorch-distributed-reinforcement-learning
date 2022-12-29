@@ -8,6 +8,7 @@ class Lock:
         self._lock = mp.Lock()
     
     # 서로 다른 프로세스 간, 데이터 오염을 방지하기 위함
+    #TODO: Lock 객체 말고, 세마포어 객체를 써야 하나..?
     @contextmanager
     def lock(self):
         self._lock.acquire()

@@ -4,6 +4,7 @@ import torch
 import pickle
 import time
 import numpy as np
+from multiprocessing import shared_memory
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
@@ -14,22 +15,34 @@ from utils.lock import Lock
 from threading import Thread
 from torch.optim import RMSprop, Adam
 # from buffers.batch_buffer import LearnerBatchStorage
-from tensorboardX import SummaryWriter
 
 local = "127.0.0.1"
-
-def counted(f):
-    def wrapper(*args, **kwargs):
-        wrapper.calls += 1
-        return f(*args, **kwargs)
-    wrapper.calls = 0
-    return wrapper
 
 L = Lock()
 
 class Learner():
-    def __init__(self, args, model):
+    def __init__(self, args, sam, dst_conn, model):
         self.args = args   
+        def sam_lock():
+            nonlocal sam
+            sam.acquire()
+            try:
+                yield
+            finally:
+                sam.release()
+            return
+        self.sam_lock = sam_lock
+        
+        self.shm_ref = dst_conn.recv() # 반드시 공유메모리의 (이름, 버퍼)를 수신해야 함.
+        assert hasattr(self.shm_ref, "obs_batch")
+        assert hasattr(self.shm_ref, "action_batch")
+        assert hasattr(self.shm_ref, "reward_batch")
+        assert hasattr(self.shm_ref, "log_prob_batch")
+        assert hasattr(self.shm_ref, "done_batch")
+        assert hasattr(self.shm_ref, "hidden_state_batch")
+        assert hasattr(self.shm_ref, "cell_state_batch")
+        assert hasattr(self.shm_ref, "batch_num")
+        
         self.device = self.args.device     
         self.model = model.to(args.device)
         # self.model.share_memory() # make other processes can assess
@@ -48,85 +61,113 @@ class Learner():
         self.stat_log_len = 20
         self.zeromq_set()
         self.mean_cal_interval = 30
-        self.writer = SummaryWriter(log_dir=self.args.result_dir) # tensorboard-log
 
     def zeromq_set(self):
         context = zmq.Context()
         
-        # learner <-> manager
-        self.sub_socket = context.socket(zmq.SUB) # subscribe batch-data, stat-data
-        self.sub_socket.bind(f"tcp://{local}:{self.args.learner_port}")
-        self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
-
         self.pub_socket = context.socket(zmq.PUB)
         self.pub_socket.bind(f"tcp://{local}:{self.args.learner_port+1}") # publish fresh learner-model
 
-    def data_subscriber(self, q_batchs):
-        self.l_t = Thread(target=self.receive_data, args=(q_batchs,), daemon=True)
-        self.l_t.start()
-                
-    def receive_data(self, q_batchs):
-        while True:
-            protocol, data = decode(*self.sub_socket.recv_multipart())
-            if protocol is Protocol.Batch:
-                if q_batchs.qsize() == q_batchs._maxsize:
-                    L.get(q_batchs)
-                L.put(q_batchs, data)
-
-            elif protocol is Protocol.Stat:
-                self.stat_list.append(data["mean_stat"])
-                if len(self.stat_list) >= self.stat_log_len:
-                    mean_stat = self.process_stat()
-                    self.log_stat_tensorboard({"log_len": self.stat_log_len, "mean_stat": mean_stat})
-                    self.stat_list = []
-            else:
-                assert False, f"Wrong protocol: {protocol}"
-                
-            time.sleep(0.01)
-
-    def process_stat(self):
-        mean_stat = {}
-        for stat_dict in self.stat_list:
-            for k, v in stat_dict.items():
-                if not k in mean_stat:
-                    mean_stat[k] = [v]
-                else:
-                    mean_stat[k].append(v)
-                    
-        mean_stat = {k: np.mean(v) for k, v in mean_stat.items()}
-        return mean_stat
-
-    def pub_model_to_workers(self, model_state_dict):        
-        self.pub_socket.send_multipart([*encode(Protocol.Model,  model_state_dict)]) 
-
-    @counted
-    def log_stat_tensorboard(self, data):
-        len       = data['log_len']
-        data_dict = data['mean_stat']
+    def monitor_sh_batch_num(self):
+        nshape = self.shm_ref["batch_num"][0]
+        ndtype = self.shm_ref["batch_num"][1]
+        nshm = self.shm_ref["batch_num"][2]
+        bshm = self.shm_ref["batch_num"][3]
         
-        for k, v in data_dict.items():
-            tag = f'worker/{len}-game-mean-stat-of-{k}'
-            # x = self.idx
-            x = self.log_stat_tensorboard.calls * len # global game counts
-            y = v
-            self.writer.add_scalar(tag, y, x)
-            print(f'tag: {tag}, y: {y}, x: {x}')
-            
+        temp_shm = shared_memory.SharedMemory(name=nshm)
+        self.sh_batch_num = np.frombuffer(buffer=temp_shm.buf, dtype=ndtype)
+        # self.sh_batch_num = np.ndarray(nshape, dtype=ndtype, buffer=bshm)
+        if (self.sh_batch_num >= self.args.batch_size).item():
+            return True
+        else:
+            return False
+       
+    def get_np_array_from_sh_memory(self, target):
+        nshape = self.shm_ref[target][0]
+        ndtype = self.shm_ref[target][1]
+        nshm = self.shm_ref[target][2]
+        bshm = self.shm_ref[target][3]
+        
+        temp_shm = shared_memory.SharedMemory(name=nshm)
+        
+        return np.frombuffer(buffer=temp_shm.buf, dtype=ndtype)
+        # return np.ndarray(nshape, dtype=ndtype, buffer=bshm)
+       
+    def get_batch_from_sh_memory(self):
+        sq = self.args.seq_len
+        bn = self.sh_batch_num
+        
+        sha = self.obs_shape
+        hs = self.args.hidden_size
+        # torch.tensor(s_lst, dtype=torch.float)
+        to_torch = lambda nparray: torch.from_numpy(nparray)
+        
+        # (seq, batch, feat)
+        sh_obs_bat = self.get_np_array_from_sh_memory("obs_batch").reshape(((sq+1), bn, *sha))
+        sh_act_bat = self.get_np_array_from_sh_memory("action_batch").reshape((sq, bn, 1))
+        sh_rew_bat = self.get_np_array_from_sh_memory("reward_batch").reshape((sq, bn, 1))
+        sh_log_pb_bat = self.get_np_array_from_sh_memory("log_prob_batch").reshape((sq, bn, 1))
+        sh_done_bat = self.get_np_array_from_sh_memory("done_batch").reshape((sq, bn, 1))
+        sh_hsta_bat = self.get_np_array_from_sh_memory("hidden_state_batch").reshape((1, bn, hs))
+        sh_csta_bat = self.get_np_array_from_sh_memory("cell_state_batch").reshape((1, bn, hs))
+        return to_torch(sh_obs_bat), to_torch(sh_act_bat), to_torch(sh_rew_bat), to_torch(sh_log_pb_bat), to_torch(sh_done_bat), to_torch(sh_hsta_bat), to_torch(sh_csta_bat)
+    
+    # def data_subscriber(self, q_batchs):
+    #     self.l_t = Thread(target=self.receive_data, args=(q_batchs,), daemon=True)
+    #     self.l_t.start()
+                
+    # def receive_data(self, q_batchs):
+    #     while True:
+    #         protocol, data = decode(*self.sub_socket.recv_multipart())
+    #         if protocol is Protocol.Batch:
+    #             if q_batchs.qsize() == q_batchs._maxsize:
+    #                 L.get(q_batchs)
+    #             L.put(q_batchs, data)
+
+    #         elif protocol is Protocol.Stat:
+    #             self.stat_list.append(data["mean_stat"])
+    #             if len(self.stat_list) >= self.stat_log_len:
+    #                 mean_stat = self.process_stat()
+    #                 self.log_stat_tensorboard({"log_len": self.stat_log_len, "mean_stat": mean_stat})
+    #                 self.stat_list = []
+    #         else:
+    #             assert False, f"Wrong protocol: {protocol}"
+                
+    #         time.sleep(0.01)
+
+    def pub_model(self, model_state_dict):        
+        self.pub_socket.send_multipart([*encode(Protocol.Model,  model_state_dict)]) 
+    
+    #TODO: 이거 동작 안 함.. 흠.. 어떻게 하지??
     def log_loss_tensorboard(self, loss, detached_losses):
         self.writer.add_scalar('total-loss', float(loss.item()), self.idx)
         self.writer.add_scalar('original-value-loss', detached_losses["value-loss"], self.idx)
         self.writer.add_scalar('original-policy-loss', detached_losses["policy-loss"], self.idx)
         self.writer.add_scalar('original-policy-entropy', detached_losses["policy-entropy"], self.idx)
-            
+
+    def reset_batch_num(self):
+        self.sh_batch_num[:] = 0
+        return
+
     # PPO
-    def learning(self, q_batchs):
+    def learning(self):
         self.idx = 0
         
         while True:
-            if q_batchs.qsize() > 0:
+            batch_args = None
+            #TODO: 무리하게 세마포어 lock을 걸어버리는 게 아닐까..?
+            with self.sam_lock(): 
+                if self.monitor_sh_batch_num():
+                    batch_args = self.get_batch_from_sh_memory()
+                    self.reset_batch_num() # 공유메모리 저장 인덱스 (batch_num) 초기화
+                    
+                # if q_batchs.qsize() > 0:
+                #     # Basically, mini-batch-learning (seq, batch, feat)
+                #     obs, actions, rewards, log_probs, dones, hidden_states, cell_states = self.make_gpu_batch(*L.get(q_batchs))
+                
+            if batch_args is not None:
                 # Basically, mini-batch-learning (seq, batch, feat)
-                obs, actions, rewards, log_probs, dones, hidden_states, cell_states = self.make_gpu_batch(*L.get(q_batchs))
-  
+                obs, actions, rewards, log_probs, dones, hidden_states, cell_states = self.make_gpu_batch(*batch_args)
                 # epoch-learning
                 for _ in range(self.args.K_epoch):
                     lstm_states = (hidden_states, cell_states) 
@@ -137,7 +178,7 @@ class Learner():
                         lstm_states, # ((1, batch, hidden_size), (1, batch, hidden_size))
                         actions
                         )     # (seq, batch, 1)         
-                       
+                    
                     # masking
                     mask = 1 - dones * torch.roll(dones, 1, 0)
                     mask_next = 1 - dones
@@ -190,7 +231,7 @@ class Learner():
                     print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
                     self.optimizer.step()
                     
-                self.pub_model_to_workers(self.model.state_dict())
+                self.pub_model(self.model.state_dict())
                 
                 if (self.idx % self.args.loss_log_interval == 0):
                     self.log_loss_tensorboard(loss, detached_losses)

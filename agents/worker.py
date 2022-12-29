@@ -9,9 +9,8 @@ import numpy as np
 
 from threading import Thread
 from utils.utils import Protocol, encode, decode
-from utils.utils import obs_preprocess, ParameterServer
+from utils.utils import obs_preprocess
 from buffers.rollout_buffer import WorkerRolloutStorage
-from tensorboardX import SummaryWriter
 
 local = "127.0.0.1"
 
@@ -21,7 +20,7 @@ class Worker():
         self.args = args
         
         self.model = model
-        self.rollouts = WorkerRolloutStorage(args, obs_shape) # buffer of each single-worker
+        self.rollouts = WorkerRolloutStorage(args, obs_shape) # buffer single-worker
         self.worker_name = worker_name
     
         self.zeromq_set(port)
@@ -31,10 +30,10 @@ class Worker():
             
         # worker <-> manager
         self.pub_socket = context.socket(zmq.PUB) 
-        self.pub_socket.connect(f"tcp://{local}:{port}") # publish rollout-data, stat-data
+        self.pub_socket.connect(f"tcp://{local}:{port}") # publish rollout, stat
 
         self.sub_socket = context.socket(zmq.SUB) 
-        self.sub_socket.connect(f"tcp://{local}:{self.args.learner_port+1}") # subscribe fresh learner-model
+        self.sub_socket.connect(f"tcp://{local}:{self.args.learner_port+1}") # subscribe model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
     
     # def model_subscriber(self):
@@ -56,7 +55,7 @@ class Worker():
                     
     #         time.sleep(0.01)
                     
-    def pub_rollout_to_manager(self):
+    def pub_rollout(self):
         rollout_data = (
             self.rollouts.obs_roll, 
             self.rollouts.action_roll, 
@@ -88,7 +87,7 @@ class Worker():
     #     if model_state_dict:
     #         self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
         
-    def pub_stat_to_manager(self):
+    def pub_stat(self):
         stat = {}
         stat.update({'epi_reward': self.epi_reward})
         self.pub_socket.send_multipart([*encode(Protocol.Stat, stat)])
@@ -121,28 +120,27 @@ class Worker():
                 
                 self.epi_reward += reward
                 # reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
-                _done = torch.FloatTensor([[1.0] if done else [0.0]])
 
                 self.rollouts.insert(
-                    obs,                        # (1, c, h, w) or (1, D)
-                    action.view(1, -1),         # (1, 1) / not one-hot, but action index
+                    obs, # (1, c, h, w) or (1, D)
+                    action.view(1, -1), # (1, 1) / not one-hot, but action index
                     torch.from_numpy(np.array([[reward*self.args.reward_scale]])), # (1, 1)
-                    next_obs,                   # (1, c, h, w) or (1, D)
-                    log_prob.view(1, -1),       # (1, 1)               
-                    _done,                      # (1, 1)
-                    lstm_hidden_state           # (h_s, c_s) / (seq, batch, hidden)
+                    next_obs, # (1, c, h, w) or (1, D)
+                    log_prob.view(1, -1), # (1, 1)               
+                    torch.FloatTensor([[1.0] if done else [0.0]]), # (1, 1)
+                    lstm_hidden_state # (h_s, c_s) / (seq, batch, hidden)
                     )
                 
-                obs = next_obs                                   # (1, c, h, w) or (1, D)
-                lstm_hidden_state = next_lstm_hidden_state       # ( (1, 1, d_h), (1, 1, d_c) )
+                obs = next_obs # (1, c, h, w) or (1, D)
+                lstm_hidden_state = next_lstm_hidden_state # ( (1, 1, d_h), (1, 1, d_c) )
                 
                 if self.rollouts.size >= self.args.seq_len or done:
                     self.rollouts.process_rollouts()
-                    self.pub_rollout_to_manager()
+                    self.pub_rollout()
                     self.buffer_reset() # flush worker-buffer
                     
                     if done:
-                        self.pub_stat_to_manager()
+                        self.pub_stat()
                         # self.req_model() # every-epi
                         self.epi_reward = 0
                         self.num_epi += 1
