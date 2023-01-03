@@ -115,6 +115,7 @@ class LearnerStorage():
     @staticmethod
     def set_shared_memory(self, np_array, name):
         shm = shared_memory.SharedMemory(create=True, size=np_array.nbytes)
+        # shm = mp.Array('f', np_array.shape)
         setattr(self, f"sh_{name}", np.frombuffer(buffer=shm.buf, dtype=np_array.dtype, count = -1))
         # setattr(self, f"sh_{name}_ref", shm.name)
         return np_array.shape, np_array.dtype, shm.name, shm.buf # 공유메모리의 (이름, 버퍼)
@@ -182,6 +183,7 @@ class LearnerStorage():
             hidden_state = rollout[5]
             cell_state   = rollout[6]
 
+            # 공유메모리에 학습 데이터 적재
             self.sh_obs_batch[(sq+1)*bn*sha: (sq+1)*(bn+1)*sha] = obs.reshape(-1).astype(np.float64)
             self.sh_action_batch[sq*bn: sq*(bn+1)] = action.reshape(-1).astype(np.float64)
             self.sh_reward_batch[sq*bn: sq*(bn+1)] = reward.reshape(-1).astype(np.float64) 

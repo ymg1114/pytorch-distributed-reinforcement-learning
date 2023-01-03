@@ -74,8 +74,9 @@ class Learner():
         nshm = self.shm_ref["batch_num"][2]
         bshm = self.shm_ref["batch_num"][3]
         
-        temp_shm = shared_memory.SharedMemory(name=nshm)
-        self.sh_batch_num = np.frombuffer(buffer=temp_shm.buf, dtype=ndtype)
+        # shm_obj = shared_memory.SharedMemory(name=nshm)
+        self.sh_batch_num = np.frombuffer(buffer=bshm, dtype=ndtype)
+        # self.sh_batch_num = np.frombuffer(buffer=shm_obj.buf, dtype=ndtype)
         # self.sh_batch_num = np.ndarray(nshape, dtype=ndtype, buffer=bshm)
         if (self.sh_batch_num >= self.args.batch_size).item():
             return True
@@ -88,11 +89,16 @@ class Learner():
         nshm = self.shm_ref[target][2]
         bshm = self.shm_ref[target][3]
         
-        temp_shm = shared_memory.SharedMemory(name=nshm)
+        # shm_obj = shared_memory.SharedMemory(name=nshm)
+        dst = np.empty(nshape, dtype=ndtype)
+        # src = np.frombuffer(buffer=shm_obj.buf, dtype=ndtype)
+        src = np.frombuffer(buffer=bshm, dtype=ndtype)
         
-        return np.frombuffer(buffer=temp_shm.buf, dtype=ndtype)
+        # return np.frombuffer(buffer=shm_obj.buf, dtype=ndtype)
         # return np.ndarray(nshape, dtype=ndtype, buffer=bshm)
-       
+        np.copyto(dst, src) # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
+        return dst
+    
     def get_batch_from_sh_memory(self):
         sq = self.args.seq_len
         bn = self.sh_batch_num
