@@ -12,7 +12,7 @@ from multiprocessing import Process, Semaphore, Pipe, Queue, set_start_method
 from datetime import datetime
 from copy import deepcopy
 from types import SimpleNamespace
-from collections import partial
+from functools import partial
 
 from agents.learner import Learner
 from agents.worker import Worker
@@ -90,7 +90,7 @@ if __name__ == '__main__':
     print(f"device: {args.device}")
     
     try:
-        set_start_method("spawn")
+        # set_start_method("spawn")
         print("spawn init method run")
         
         dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
@@ -102,7 +102,7 @@ if __name__ == '__main__':
 
         # only to get observation, action space
         env = gym.make(args.env)
-        env.seed(0)
+        # env.seed(0)
         n_outputs = env.action_space.n
         print('Action Space: ', n_outputs)
         print('Observation Space: ', env.observation_space.shape)

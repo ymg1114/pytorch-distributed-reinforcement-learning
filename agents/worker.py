@@ -3,7 +3,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import time
 import zmq
 import gym
-import asyncio
 import torch
 import numpy as np
 
@@ -104,7 +103,8 @@ class Worker():
         env = gym.make(self.args.env)
         
         while True:    
-            obs = obs_preprocess(env.reset(), self.args.need_conv)
+            _reset, _ = env.reset()
+            obs = obs_preprocess(_reset, self.args.need_conv)
             # print(f"worker_name: {self.worker_name}, obs: {obs}")
             lstm_hidden_state = (torch.zeros((1, 1, self.args.hidden_size)), torch.zeros((1, 1, self.args.hidden_size))) # (h_s, c_s) / (seq, batch, hidden)
             self.epi_reward = 0
@@ -115,7 +115,7 @@ class Worker():
             for step in range(self.args.time_horizon):
                 self.req_model() # every-step
                 action, log_prob, next_lstm_hidden_state = self.model.act(obs, lstm_hidden_state)
-                next_obs, reward, done, _ = env.step(action.item())
+                next_obs, reward, done, _, _ = env.step(action.item())
                 next_obs = obs_preprocess(next_obs, self.args.need_conv)
                 
                 self.epi_reward += reward

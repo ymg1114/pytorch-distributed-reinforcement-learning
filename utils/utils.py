@@ -146,7 +146,7 @@ def KillProcesses(pid):
         
         
 def encode(protocol, data):
-    return pickle.dumps(protocol), blosc2.compress(pickle.dumps(data), clevel=1, cname='zstd')
+    return pickle.dumps(protocol), blosc2.compress(pickle.dumps(data), clevel=1)
 
 
 def decode(protocol, data):

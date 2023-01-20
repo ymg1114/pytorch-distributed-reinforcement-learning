@@ -1,5 +1,6 @@
 import torch
 import zmq
+import zmq.asyncio
 import time
 import asyncio
 import numpy as np
@@ -60,7 +61,7 @@ class Manager():
             protocol, data = decode(*(await self.sub_socket.recv_multipart()))
             if len(self.data_q) == self.data_q.maxlen:
                 self.data_q.popleft() # FIFO
-            self.data_q.append(protocol, data)
+            self.data_q.append((protocol, data))
             
             await asyncio.sleep(0.01)
     
