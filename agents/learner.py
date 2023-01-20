@@ -100,6 +100,7 @@ class Learner():
             if batch_args is not None:
                 # Basically, mini-batch-learning (seq, batch, feat)
                 obs, actions, rewards, log_probs, dones, hidden_states, cell_states = self.make_gpu_batch(*batch_args)
+
                 # epoch-learning
                 for _ in range(self.args.K_epoch):
                     lstm_states = (hidden_states, cell_states) 
@@ -160,7 +161,7 @@ class Learner():
                     self.optimizer.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-                    print("loss {:.3f} original_value_loss {:.3f} original_policy_loss {:.3f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
+                    print("loss {:.5f} original_value_loss {:.5f} original_policy_loss {:.5f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
                     self.optimizer.step()
                     
                 self.pub_model(self.model.state_dict())

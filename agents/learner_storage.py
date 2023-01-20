@@ -249,7 +249,7 @@ class LearnerStorage():
         hs = self.args.hidden_size
         
         # torch.tensor(s_lst, dtype=torch.float)
-        _to_torch = lambda nparray: torch.from_numpy(nparray)
+        _to_torch = lambda nparray: torch.from_numpy(nparray).type(torch.float32)
 
         # (seq, batch, feat)
         sh_obs_bat = LearnerStorage.copy_to_ndarray(self.sh_obs_batch).reshape(((sq+1), bn, *sha))
