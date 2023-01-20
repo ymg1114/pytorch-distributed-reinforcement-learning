@@ -27,9 +27,9 @@ with open(utils) as f:
 # def str2bool(v):
 #       return v.lower() in ("yes", "Yes", "true", "True, "T", t", "1")
     
-def mul(*args):
-    _val = 1.0
-    for e in args:
+def mul(shape_dim):
+    _val = 1
+    for e in shape_dim:
         _val *= e
     return _val
     
