@@ -33,16 +33,16 @@ def manager_run(args, *obs_shape):
     asyncio.run(manager.data_chain())
 
 
-def storage_run(args, sam_lock, src_conn, *obs_shape):
-    storage = LearnerStorage(args, sam_lock, src_conn, obs_shape)
-    storage.set_data_to_shared_memory()
+def storage_run(args, sam_lock, datafram_keyword, queue, *obs_shape):
+    storage = LearnerStorage(args, sam_lock, datafram_keyword, queue, obs_shape)
+    asyncio.run(storage.shared_memory_chain())
 
 
-def run(args, sam_lock, dst_conn, learner_model, child_procs):
+def run(args, sam_lock, learner_model, child_procs, queue):
     [p.start() for p in child_procs]
-    learner = Learner(args, sam_lock, dst_conn, learner_model)
-    learner.learning()              
-    [p.join() for p in child_procs]
+    learner = Learner(args, sam_lock, learner_model, queue)
+    learner.learning()          
+    # [p.join() for p in child_procs]
 
 
 if __name__ == '__main__':    
@@ -116,7 +116,7 @@ if __name__ == '__main__':
             obs_shape = [env.observation_space.shape[0]]
         env.close()
         
-        src_conn, dst_conn = Pipe()
+        # src_conn, dst_conn = Pipe()
         # sam = Semaphore(1) # 동시 접근 허용 프로세스 1개
         sam_lock = partial(SamLock, sam=Semaphore(1))
         
@@ -142,11 +142,25 @@ if __name__ == '__main__':
             w = Process(target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape), daemon=True) # child-processes
             child_procs.append(w)
             
-        s = Process(target=storage_run, args=(args, sam_lock, src_conn, *obs_shape), daemon=True) # child-processes
+        #TODO: 이런 하드코딩 스타일도 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
+        datafram_keyword = [
+            "obs_batch", 
+            "action_batch", 
+            "reward_batch", 
+            "log_prob_batch", 
+            "done_batch", 
+            "hidden_state_batch", 
+            "cell_state_batch", 
+            "batch_num"
+            ]
+        # writer = SummaryWriter(log_dir=args.result_dir) # tensorboard-log
+        # queue = asyncio.Queue(1024)
+        queue = mp.Queue(1024)
+        s = Process(target=storage_run, args=(args, sam_lock, datafram_keyword, queue, *obs_shape), daemon=True) # child-processes
         child_procs.append(s)
         
-        run(args, sam_lock, dst_conn, learner_model, child_procs) # main-process
-            
+        run(args, sam_lock, learner_model, child_procs, queue) # main-process
+        
     except:
         log_dir = os.path.join(os.getcwd(), "logs")
         if not os.path.isdir(log_dir):

@@ -58,7 +58,7 @@ class Manager():
 
     async def sub_data(self):
         while True:
-            protocol, data = decode(*(await self.sub_socket.recv_multipart()))
+            protocol, data = decode(*await self.sub_socket.recv_multipart())
             if len(self.data_q) == self.data_q.maxlen:
                 self.data_q.popleft() # FIFO
             self.data_q.append((protocol, data))
