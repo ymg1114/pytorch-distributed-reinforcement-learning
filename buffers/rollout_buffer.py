@@ -19,26 +19,26 @@ class WorkerRolloutStorage():
         self.size = 0
         
     def reset_rolls(self):
-        self.obs_roll          = torch.zeros(self.args.seq_len+1, *self.obs_shape)
-        # self.action_roll       = torch.zeros(3*self.args.seq_len, self.n_outputs) # one-hot
-        self.action_roll       = torch.zeros(self.args.seq_len, 1) # not one-hot, but action index (scalar)
-        self.reward_roll       = torch.zeros(self.args.seq_len, 1) # scalar
-        self.log_prob_roll     = torch.zeros(self.args.seq_len, 1) # scalar
-        self.done_roll         = torch.zeros(self.args.seq_len, 1) # scalar
+        self.obs_roll = torch.zeros(self.args.seq_len+1, *self.obs_shape)
+        # self.action_roll = torch.zeros(3*self.args.seq_len, self.n_outputs) # one-hot
+        self.action_roll = torch.zeros(self.args.seq_len, 1) # not one-hot, but action index (scalar)
+        self.reward_roll = torch.zeros(self.args.seq_len, 1) # scalar
+        self.log_prob_roll = torch.zeros(self.args.seq_len, 1) # scalar
+        self.done_roll = torch.zeros(self.args.seq_len, 1) # scalar
     
         self.hidden_state_roll = torch.zeros(1, self.args.hidden_size)
         self.cell_state_roll   = torch.zeros(1, self.args.hidden_size)
         
     def insert(self, obs, action, reward, next_obs, log_prob, done, lstm_hidden_state):
-        self.obs.append(obs.to(self.device))               # (1, c, h, w) or (1, D)
-        self.actions.append(action.to(self.device))        # (1, 1) / not one-hot, but action index
-        self.rewards.append(reward.to(self.device))        # (1, 1)
-        self.next_obs = next_obs                             # (1, c, h, w) or (1, D)
-        self.log_probs.append(log_prob.to(self.device))    # (1, 1)
-        self.dones.append(done.to(self.device))            # (1, 1)
+        self.obs.append(obs.to(self.device)) # (1, c, h, w) or (1, D)
+        self.actions.append(action.to(self.device)) # (1, 1) / not one-hot, but action index
+        self.rewards.append(reward.to(self.device)) # (1, 1)
+        self.next_obs = next_obs # (1, c, h, w) or (1, D)
+        self.log_probs.append(log_prob.to(self.device)) # (1, 1)
+        self.dones.append(done.to(self.device)) # (1, 1)
         
         lstm_hidden_state = (lstm_hidden_state[0].to(self.device), lstm_hidden_state[1].to(self.device)) 
-        self.lstm_hidden_states.append(lstm_hidden_state)  # ((1, 1, d_h), (1, 1, d_c))
+        self.lstm_hidden_states.append(lstm_hidden_state) # ((1, 1, d_h), (1, 1, d_c))
         
         self.size += 1
          

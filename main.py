@@ -12,6 +12,7 @@ from multiprocessing import Process, Semaphore, Pipe, Queue, set_start_method
 from datetime import datetime
 from copy import deepcopy
 from types import SimpleNamespace
+from collections import partial
 
 from agents.learner import Learner
 from agents.worker import Worker
@@ -19,7 +20,7 @@ from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
 from threading import Thread
-from utils.utils import KillProcesses, SaveErrorLog, Params
+from utils.utils import KillProcesses, SaveErrorLog, Params, SamLock
 
         
 def worker_run(args, model, worker_name, port, *obs_shape):
@@ -32,14 +33,14 @@ def manager_run(args, *obs_shape):
     asyncio.run(manager.data_chain())
 
 
-def storage_run(args, sam, src_conn, *obs_shape):
-    storage = LearnerStorage(args, sam, src_conn, obs_shape)
+def storage_run(args, sam_lock, src_conn, *obs_shape):
+    storage = LearnerStorage(args, sam_lock, src_conn, obs_shape)
     storage.set_data_to_shared_memory()
 
 
-def run(args, sam, dst_conn, learner_model, child_procs):
+def run(args, sam_lock, dst_conn, learner_model, child_procs):
     [p.start() for p in child_procs]
-    learner = Learner(args, sam, dst_conn, learner_model)
+    learner = Learner(args, sam_lock, dst_conn, learner_model)
     learner.learning()              
     [p.join() for p in child_procs]
 
@@ -106,7 +107,8 @@ if __name__ == '__main__':
         print('Action Space: ', n_outputs)
         print('Observation Space: ', env.observation_space.shape)
         
-        if args.need_conv or len(env.observation_space.shape) > 1:
+        # 현재 openai-gym에 한정함
+        if args.need_conv and len(env.observation_space.shape) > 1:
             M = __import__("networks.models", fromlist=[None]).ConvLSTM
             obs_shape = [p.H, p.W, env.observation_space.shape[2]]
         else:
@@ -115,7 +117,8 @@ if __name__ == '__main__':
         env.close()
         
         src_conn, dst_conn = Pipe()
-        sam = Semaphore(1) # 동시 접근 허용 프로세스 1개
+        # sam = Semaphore(1) # 동시 접근 허용 프로세스 1개
+        sam_lock = partial(SamLock, sam=Semaphore(1))
         
         child_procs = []
         # daemonic process is not allowed to create child process
@@ -139,10 +142,10 @@ if __name__ == '__main__':
             w = Process(target=worker_run, args=(args, worker_model, worker_name, args.worker_port, *obs_shape), daemon=True) # child-processes
             child_procs.append(w)
             
-        m = Process(target=storage_run, args=(args, sam, src_conn, *obs_shape), daemon=True) # child-processes
-        child_procs.append(m)
+        s = Process(target=storage_run, args=(args, sam_lock, src_conn, *obs_shape), daemon=True) # child-processes
+        child_procs.append(s)
         
-        run(args, sam, dst_conn, learner_model, child_procs)
+        run(args, sam_lock, dst_conn, learner_model, child_procs)
             
     except:
         log_dir = os.path.join(os.getcwd(), "logs")

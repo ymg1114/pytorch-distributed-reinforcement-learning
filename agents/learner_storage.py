@@ -3,7 +3,6 @@ import zmq
 import time
 import numpy as np
 from collections import deque
-from contextlib import contextmanager
 import multiprocessing as mp
 from multiprocessing import shared_memory
 
@@ -24,7 +23,7 @@ def counted(f):
 
 
 class LearnerStorage():
-    def __init__(self, args, sam, src_conn, obs_shape):
+    def __init__(self, args, sam_lock, src_conn, obs_shape):
         self.args = args
         self.obs_shape = obs_shape
         # self.device = self.args.device
@@ -32,14 +31,6 @@ class LearnerStorage():
         
         self.stat_list = []
         self.stat_log_len = 20
-        def sam_lock():
-            nonlocal sam
-            sam.acquire()
-            try:
-                yield
-            finally:
-                sam.release()
-            return
         self.sam_lock = sam_lock
         
         self.src_conn = src_conn
@@ -116,7 +107,7 @@ class LearnerStorage():
     def set_shared_memory(self, np_array, name):
         shm = shared_memory.SharedMemory(create=True, size=np_array.nbytes)
         # shm = mp.Array('f', np_array.shape)
-        setattr(self, f"sh_{name}", np.frombuffer(buffer=shm.buf, dtype=np_array.dtype, count = -1))
+        setattr(self, f"sh_{name}", np.frombuffer(buffer=shm.buf, dtype=np_array.dtype, count=-1))
         # setattr(self, f"sh_{name}_ref", shm.name)
         return np_array.shape, np_array.dtype, shm.name, shm.buf # 공유메모리의 (이름, 버퍼)
     

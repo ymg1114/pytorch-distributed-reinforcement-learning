@@ -21,16 +21,8 @@ local = "127.0.0.1"
 L = Lock()
 
 class Learner():
-    def __init__(self, args, sam, dst_conn, model):
+    def __init__(self, args, sam_lock, dst_conn, model):
         self.args = args   
-        def sam_lock():
-            nonlocal sam
-            sam.acquire()
-            try:
-                yield
-            finally:
-                sam.release()
-            return
         self.sam_lock = sam_lock
         
         self.shm_ref = dst_conn.recv() # 반드시 공유메모리의 (이름, 버퍼)를 수신해야 함.

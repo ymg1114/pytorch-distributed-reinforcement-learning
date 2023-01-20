@@ -132,7 +132,7 @@ class Worker():
                     )
                 
                 obs = next_obs # (1, c, h, w) or (1, D)
-                lstm_hidden_state = next_lstm_hidden_state # ( (1, 1, d_h), (1, 1, d_c) )
+                lstm_hidden_state = next_lstm_hidden_state # ((1, 1, d_h), (1, 1, d_c))
                 
                 if self.rollouts.size >= self.args.seq_len or done:
                     self.rollouts.process_rollouts()

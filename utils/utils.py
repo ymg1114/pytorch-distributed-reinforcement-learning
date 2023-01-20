@@ -9,6 +9,7 @@ import blosc2
 import torchvision.transforms as T
 import torch.multiprocessing as mp
 
+from contextlib import contextmanager
 from enum import Enum, auto
 from pathlib import Path
 from signal import SIGTERM # or SIGKILL
@@ -65,6 +66,16 @@ def obs_preprocess(obs, need_conv):
     
     else:
         return torch.from_numpy(obs).unsqueeze(0).to(torch.float32) # (D) -> (1, D)
+
+
+@contextmanager
+def SamLock(sam):
+    sam.acquire()
+    try:
+        yield
+    finally:
+        sam.release()
+    return
 
 
 class ParameterServer():
