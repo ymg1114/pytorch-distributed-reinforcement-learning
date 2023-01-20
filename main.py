@@ -145,7 +145,7 @@ if __name__ == '__main__':
         s = Process(target=storage_run, args=(args, sam_lock, src_conn, *obs_shape), daemon=True) # child-processes
         child_procs.append(s)
         
-        run(args, sam_lock, dst_conn, learner_model, child_procs)
+        run(args, sam_lock, dst_conn, learner_model, child_procs) # main-process
             
     except:
         log_dir = os.path.join(os.getcwd(), "logs")

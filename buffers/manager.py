@@ -24,9 +24,8 @@ class Manager():
         # self.device = self.args.device
         self.device = torch.device('cpu')
         
-        self.recv_q = deque(maxlen=1024)
-        self.rollout_q = deque(maxlen=1024)
-        
+        self.data_q = deque(maxlen=1024)
+
         self.stat_list = []
         self.stat_log_len = 20
         self.zeromq_set(worker_port)
@@ -43,9 +42,10 @@ class Manager():
         self.pub_socket = context.socket(zmq.PUB) # publish batch-data, stat-data
         self.pub_socket.connect(f"tcp://{local}:{self.args.learner_port}")
 
-    def process_stat(self):
+    @staticmethod
+    def process_stat(stat_list):
         mean_stat = {}
-        for stat_dict in self.stat_list:
+        for stat_dict in stat_list:
             for k, v in stat_dict.items():
                 if not k in mean_stat:
                     mean_stat[k] = [v]
@@ -58,28 +58,24 @@ class Manager():
     async def sub_data(self):
         while True:
             protocol, data = decode(*(await self.sub_socket.recv_multipart()))
-            if len(self.recv_q) == self.recv_q.maxlen:
-                self.recv_q.popleft() # FIFO
-            self.recv_q.append(protocol, data)
+            if len(self.data_q) == self.data_q.maxlen:
+                self.data_q.popleft() # FIFO
+            self.data_q.append(protocol, data)
             
             await asyncio.sleep(0.01)
     
     async def pub_data(self):
         while True:
-            if len(self.recv_q) > 0:
-                protocol, data = self.recv_q.pop()
-                
+            if len(self.data_q) > 0:
+                protocol, data = self.data_q.pop()
                 if protocol is Protocol.Rollout:
-                    if len(self.rollout_q) == self.rollout_q.maxlen:
-                        self.rollout_q.popleft() # FIFO
-                    self.rollout_q.append(data)
-                    await self.pub_socket.send_multipart([*encode(Protocol.Rollout, self.rollout_q.pop())])
+                    await self.pub_socket.send_multipart([*encode(Protocol.Rollout, data)])
                     
                 elif protocol is Protocol.Stat:
                     self.stat_list.append(data)
                     if len(self.stat_list) >= self.stat_log_len:
-                        mean_stat = self.process_stat()
-                        await self.pub_socket.send_multipart([*encode(Protocol.Stat, {"log_len": self.stat_log_len, "mean_stat": mean_stat})])
+                        mean_stat = Manager.process_stat(self.stat_list)
+                        await self.pub_socket.send_multipart([*encode(Protocol.Stat, {"log_len": len(self.stat_list), "mean_stat": mean_stat})])
                         self.stat_list = []
                 else:
                     assert False, f"Wrong protocol: {protocol}"

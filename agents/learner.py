@@ -108,6 +108,7 @@ class Learner():
         sh_done_bat = self.get_np_array_from_sh_memory("done_batch").reshape((sq, bn, 1))
         sh_hsta_bat = self.get_np_array_from_sh_memory("hidden_state_batch").reshape((1, bn, hs))
         sh_csta_bat = self.get_np_array_from_sh_memory("cell_state_batch").reshape((1, bn, hs))
+        
         return to_torch(sh_obs_bat), to_torch(sh_act_bat), to_torch(sh_rew_bat), to_torch(sh_log_pb_bat), to_torch(sh_done_bat), to_torch(sh_hsta_bat), to_torch(sh_csta_bat)
     
     # def data_subscriber(self, q_batchs):
