@@ -1,4 +1,3 @@
-
 {
     "env": "CartPole-v1",
     "need_conv": false,
@@ -6,30 +5,24 @@
     "w": 84,
     "gray": false,
     "hidden_size": 32,
-
     "time_horizon": 500,
     "repeat_actions": 4,
     "frame_stack": 4,
-
     "reward_scale": 0.01,
     "unroll_length": 5,
     "batch_size": 64,
     "gamma": 0.99,
     "lmbda": 0.95,
     "eps_clip": 0.1,
-
     "policy_loss_coef": 1.0,
     "value_loss_coef": 0.5,
     "entropy_coef": 0.0005,
-
     "K_epoch": 1,
     "learning_rate": 0.00001,
     "clip_gradient_norm": 40,
-
     "log_save_interval": 50,
     "model_save_interval": 100,
     "gpu_idx": 0,
-
     "num_worker": 50,
     "worker_port": 2716,
     "learner_port": 4716

@@ -9,19 +9,33 @@ import numpy as np
 from threading import Thread
 from utils.utils import Protocol, encode, decode
 from utils.utils import obs_preprocess
-from buffers.rollout_buffer import WorkerRolloutStorage
 
 local = "127.0.0.1"
 
+
+class Env():
+    def __init__(self, args):
+        self.args = args
+        self._env = gym.make(args.env)
+
+    def reset(self):
+        obs, _ = self._env.reset()
+        return obs_preprocess(obs, self.args.need_conv)
+    
+    def step(self, act):
+        obs, rew, done, _, _ = self._env_.step(act)
+        return obs_preprocess(obs, self.args.need_conv), rew, done
+    
+    
 class Worker():
     def __init__(self, args, model, worker_name, port, obs_shape):
         self.device = torch.device('cpu')
         self.args = args
+        self.env = Env(args)
         
         self.model = model
-        self.rollouts = WorkerRolloutStorage(args, obs_shape) # buffer single-worker
         self.worker_name = worker_name
-    
+
         self.zeromq_set(port)
         
     def zeromq_set(self, port):  
@@ -53,18 +67,9 @@ class Worker():
     #             pass
                     
     #         time.sleep(0.01)
-                    
-    def pub_rollout(self):
-        rollout_data = (
-            self.rollouts.obs_roll, 
-            self.rollouts.action_roll, 
-            self.rollouts.reward_roll,
-            self.rollouts.log_prob_roll, 
-            self.rollouts.done_roll,
-            self.rollouts.hidden_state_roll,
-            self.rollouts.cell_state_roll
-            )
-        self.pub_socket.send_multipart([*encode(Protocol.Rollout, rollout_data)]) 
+                            
+    def pub_rollout2(self, **step_data):
+        self.pub_socket.send_multipart([*encode(Protocol.Rollout, step_data)]) 
         # print(f"worker_name: {self.worker_name} pub rollout to manager!")
         
     # NO-BLOCK
@@ -88,63 +93,55 @@ class Worker():
         
     def pub_stat(self):
         stat = {}
-        stat.update({'epi_reward': self.epi_reward})
+        stat.update({'epi_rew': self.epi_rew})
         self.pub_socket.send_multipart([*encode(Protocol.Stat, stat)])
-        
-    def buffer_reset(self):
-        self.rollouts.reset_list()       
-        self.rollouts.reset_rolls() 
-        self.rollouts.size = 0
         
     def collect_rolloutdata(self):
         print('Build Environment for {}'.format(self.worker_name))
     
         self.num_epi = 0
-        env = gym.make(self.args.env)
-        
         while True:    
-            _reset, _ = env.reset()
-            obs = obs_preprocess(_reset, self.args.need_conv)
+            obs = self.env.reset()
+            _id = int(np.random.random() * 10000000)
             # print(f"worker_name: {self.worker_name}, obs: {obs}")
-            lstm_hidden_state = (torch.zeros((1, 1, self.args.hidden_size)), torch.zeros((1, 1, self.args.hidden_size))) # (h_s, c_s) / (seq, batch, hidden)
-            self.epi_reward = 0
+            lstm_hx = (torch.zeros((1, 1, self.args.hidden_size)), torch.zeros((1, 1, self.args.hidden_size))) # (h_s, c_s) / (seq, batch, hidden)
+            self.epi_rew = 0
             
-            # init worker-buffer
-            self.buffer_reset()    
-                
-            for step in range(self.args.time_horizon):
+            # # init worker-buffer
+            # self.buffer_reset()    
+            
+            is_fir = True # first frame
+            for _ in range(self.args.time_horizon):
                 self.req_model() # every-step
-                action, log_prob, next_lstm_hidden_state = self.model.act(obs, lstm_hidden_state)
-                next_obs, reward, done, _, _ = env.step(action.item())
-                next_obs = obs_preprocess(next_obs, self.args.need_conv)
+                act, logits, lstm_hx_next = self.model.act(obs, lstm_hx)
+                next_obs, rew, done = self.env.step(act.item())
                 
-                self.epi_reward += reward
-                # reward = np.clip(reward, self.args.reward_clip[0], self.args.reward_clip[1])
+                self.epi_rew += rew
+                # rew = np.clip(rew, self.args.reward_clip[0], self.args.reward_clip[1])
 
-                self.rollouts.insert(
-                    obs, # (1, c, h, w) or (1, D)
-                    action.view(1, -1), # (1, 1) / not one-hot, but action index
-                    torch.from_numpy(np.array([[reward*self.args.reward_scale]])), # (1, 1)
-                    next_obs, # (1, c, h, w) or (1, D)
-                    log_prob.view(1, -1), # (1, 1)               
-                    torch.FloatTensor([[1.0] if done else [0.0]]), # (1, 1)
-                    lstm_hidden_state # (h_s, c_s) / (seq, batch, hidden)
-                    )
+                step_data = {
+                    "obs": obs, # (1, c, h, w) or (1, D)
+                    "act": act.view(1, -1), # (1, 1) / not one-hot, but action index
+                    "rew": torch.from_numpy(np.array([[rew*self.args.reward_scale]])), # (1, 1)
+                    "logits": logits,
+                    "is_fir": torch.FloatTensor([[1.0] if is_fir else [0.0]]), # (1, 1),
+                    "hx": lstm_hx[0], # (seq, batch, hidden)
+                    "cx": lstm_hx[1], # (seq, batch, hidden)
+                    "id": _id,
+                }
+     
+                self.pub_rollout2(**step_data)
                 
-                obs = next_obs # (1, c, h, w) or (1, D)
-                lstm_hidden_state = next_lstm_hidden_state # ((1, 1, d_h), (1, 1, d_c))
+                is_fir = False
+                obs = next_obs
+                lstm_hx = lstm_hx_next
                 
-                if self.rollouts.size >= self.args.seq_len or done:
-                    self.rollouts.process_rollouts()
-                    self.pub_rollout()
-                    self.buffer_reset() # flush worker-buffer
-                    
-                    if done:
-                        self.pub_stat()
-                        # self.req_model() # every-epi
-                        self.epi_reward = 0
-                        self.num_epi += 1
-                        break
-                    
+                if done:
+                    self.pub_stat()
+                    # self.req_model() # every-epi
+                    self.epi_rew = 0
+                    self.num_epi += 1
+                    break
+
                 time.sleep(0.1)
             

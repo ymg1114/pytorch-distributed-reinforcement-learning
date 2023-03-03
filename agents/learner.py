@@ -10,12 +10,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 
+from torch.distributions import Categorical
+from functools import partial
 from collections import deque
 from agents.learner_storage import LearnerStorage
-from utils.utils import Protocol, encode, decode
+from utils.utils import Protocol, encode, decode, make_gpu_batch
 from utils.lock import Lock
 from threading import Thread
 from torch.optim import RMSprop, Adam
+
 # from buffers.batch_buffer import LearnerBatchStorage
 from tensorboardX import SummaryWriter
 
@@ -23,42 +26,43 @@ local = "127.0.0.1"
 
 L = Lock()
 
-class Learner():
-    def __init__(self, args, sam_lock, model, queue):        
-        self.args = args   
+
+class Learner:
+    def __init__(self, args, sam_lock, model, queue):
+        self.args = args
         self.sam_lock = sam_lock
         self.batch_queue = queue
-        
-        self.device = self.args.device     
+
+        self.device = self.args.device
         self.model = model.to(args.device)
         # self.model.share_memory() # make other processes can assess
         # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
         self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
-        
-        # self.q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker-rollout 
+        self.ct = Categorical
+
+        # self.q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker-rollout
         # self.batch_buffer = LearnerBatchStorage(args, obs_shape)
-        
-        def make_gpu_batch(*args):
-            to_gpu = lambda tensor: tensor.to(self.device)
-            return tuple(map(to_gpu, args))
-        self.make_gpu_batch = make_gpu_batch
-        
+
+        self.to_gpu = partial(make_gpu_batch, device=self.device)
+
         self.stat_list = []
         self.stat_log_len = 20
         self.zeromq_set()
         self.mean_cal_interval = 30
-        self.writer = SummaryWriter(log_dir=args.result_dir) # tensorboard-log
-        
+        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
+
     def zeromq_set(self):
         context = zmq.Context()
-        
+
         self.pub_socket = context.socket(zmq.PUB)
-        self.pub_socket.bind(f"tcp://{local}:{self.args.learner_port+1}") # publish fresh learner-model
+        self.pub_socket.bind(
+            f"tcp://{local}:{self.args.learner_port+1}"
+        )  # publish fresh learner-model
 
     # def data_subscriber(self, q_batchs):
     #     self.l_t = Thread(target=self.receive_data, args=(q_batchs,), daemon=True)
     #     self.l_t.start()
-                
+
     # def receive_data(self, q_batchs):
     #     while True:
     #         protocol, data = decode(*self.sub_socket.recv_multipart())
@@ -75,81 +79,98 @@ class Learner():
     #                 self.stat_list = []
     #         else:
     #             assert False, f"Wrong protocol: {protocol}"
-                
+
     #         time.sleep(0.01)
 
-    def pub_model(self, model_state_dict):        
-        self.pub_socket.send_multipart([*encode(Protocol.Model,  model_state_dict)]) 
-    
-    #TODO: 이거 동작 안 함.. 흠.. 어떻게 하지??
+    def pub_model(self, model_state_dict):
+        self.pub_socket.send_multipart([*encode(Protocol.Model, model_state_dict)])
+
+    # TODO: 현재 작동하지 않아 주석 상태. 개선 필요.
     def log_loss_tensorboard(self, loss, detached_losses):
-        self.writer.add_scalar('total-loss', float(loss.item()), self.idx)
-        self.writer.add_scalar('original-value-loss', detached_losses["value-loss"], self.idx)
-        self.writer.add_scalar('original-policy-loss', detached_losses["policy-loss"], self.idx)
-        self.writer.add_scalar('original-policy-entropy', detached_losses["policy-entropy"], self.idx)
+        self.writer.add_scalar("total-loss", float(loss.item()), self.idx)
+        self.writer.add_scalar(
+            "original-value-loss", detached_losses["value-loss"], self.idx
+        )
+        self.writer.add_scalar(
+            "original-policy-loss", detached_losses["policy-loss"], self.idx
+        )
+        self.writer.add_scalar(
+            "original-policy-entropy", detached_losses["policy-entropy"], self.idx
+        )
 
     # PPO
     def learning(self):
         self.idx = 0
 
         while True:
-            #TODO: 무리하게 세마포어 lock을 걸어버리는 게 아닐까..?
-            # with self.sam_lock(): 
+            # TODO: 무리하게 세마포어 lock을 걸어버리는 게 아닐까..?
+            # with self.sam_lock():
             batch_args = self.batch_queue.get()
 
             if batch_args is not None:
                 # Basically, mini-batch-learning (seq, batch, feat)
-                obs, actions, rewards, log_probs, dones, hidden_states, cell_states = self.make_gpu_batch(*batch_args)
+                obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
+                behav_log_probs = self.ct(F.softmax(logits, dim=-1)).log_prob(
+                    act.squeeze(-1)
+                )
 
                 # epoch-learning
                 for _ in range(self.args.K_epoch):
-                    lstm_states = (hidden_states, cell_states) 
-                    
+                    lstm_states = (
+                        hx[0].unsqueeze(0),
+                        cx[0].unsqueeze(0),
+                    )  # (seq, batch, hidden) -> (1, batch, hidden)
+
                     # on-line model forwarding
-                    target_log_probs, target_entropy, target_value, lstm_states = self.model(
-                        obs,         # (seq+1, batch, c, h, w)
-                        lstm_states, # ((1, batch, hidden_size), (1, batch, hidden_size))
-                        actions
-                        )     # (seq, batch, 1)         
-                    
-                    # masking
-                    mask = 1 - dones * torch.roll(dones, 1, 0)
-                    mask_next = 1 - dones
-                                    
-                    value_current = target_value[:-1] * mask     # current
-                    value_next    = target_value[1:] * mask_next # next
-                    
-                    target_log_probs = target_log_probs * mask # current
-                    log_probs = log_probs * mask               # current
-                    target_entropy = target_entropy * mask     # current
-                    
-                    # td-target (value-target)
-                    # delta for ppo-gae
-                    td_target = rewards + self.args.gamma * value_next
-                    delta = td_target - value_current
+                    log_probs, entropy, value = self.model(
+                        obs,  # (seq, batch, *sha)
+                        lstm_states,  # ((1, batch, hidden), (1, batch, hidden))
+                        act,
+                    )
+
+                    td_target = (
+                        rew[:-1] + self.args.gamma * (1 - is_fir[1:]) * value[1:]
+                    )
+                    delta = td_target - value[:-1]
                     delta = delta.cpu().detach().numpy()
-                    
+
                     # ppo-gae (advantage)
                     advantages = []
-                    advantage_t = np.zeros(delta.shape[1:]) # Terminal: (seq, batch, d) -> (batch, d)
-                    mask_row = mask_next.detach().cpu().numpy()
-                    for (delta_row, m_r) in zip(delta[::-1], mask_row[::-1]):
-                        advantage_t = delta_row + self.args.gamma * self.args.lmbda * m_r * advantage_t # recursive
+                    advantage_t = np.zeros(
+                        delta.shape[1:]
+                    )  # Terminal: (seq, batch, d) -> (batch, d)
+                    for delta_row in delta[::-1]:
+                        advantage_t = (
+                            delta_row + self.args.gamma * self.args.lmbda * advantage_t
+                        )  # recursive
                         advantages.append(advantage_t)
                     advantages.reverse()
                     # advantage = torch.stack(advantages, dim=0).to(torch.float)
-                    advantage = torch.tensor(advantages, dtype=torch.float).to(self.device)
+                    advantage = torch.tensor(advantages, dtype=torch.float).to(
+                        self.device
+                    )
 
-                    ratio = torch.exp(target_log_probs - log_probs)  # a/b == log(exp(a)-exp(b))
+                    ratio = torch.exp(
+                        log_probs - behav_log_probs
+                    )  # a/b == log(exp(a)-exp(b))
                     surr1 = ratio * advantage
-                    surr2 = torch.clamp(ratio, 1-self.args.eps_clip, 1+self.args.eps_clip) * advantage
-                    
+                    surr2 = (
+                        torch.clamp(
+                            ratio, 1 - self.args.eps_clip, 1 + self.args.eps_clip
+                        )
+                        * advantage
+                    )
+
                     loss_policy = -torch.min(surr1, surr2).mean()
-                    loss_value = F.smooth_l1_loss(value_current, td_target.detach()).mean()  
-                    policy_entropy = target_entropy.mean()
-                    
+                    loss_value = F.smooth_l1_loss(value[:-1], td_target.detach()).mean()
+                    policy_entropy = entropy.mean()
+
                     # Summing all the losses together
-                    loss = self.args.policy_loss_coef*loss_policy + self.args.value_loss_coef*loss_value - self.args.entropy_coef*policy_entropy
+                    loss = (
+                        self.args.policy_loss_coef * loss_policy
+                        + self.args.value_loss_coef * loss_value
+                        - self.args.entropy_coef * policy_entropy
+                    )
 
                     # These are only used for the statistics
                     detached_losses = {
@@ -157,19 +178,31 @@ class Learner():
                         "value-loss": loss_value.detach().cpu(),
                         "policy-entropy": policy_entropy.detach().cpu(),
                     }
-                    
+
                     self.optimizer.zero_grad()
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-                    print("loss {:.5f} original_value_loss {:.5f} original_policy_loss {:.5f} original_policy_entropy {:.5f}".format( loss.item(), detached_losses["value-loss"], detached_losses["policy-loss"], detached_losses["policy-entropy"] ))
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.args.max_grad_norm
+                    )
+                    print(
+                        "loss {:.5f} original_value_loss {:.5f} original_policy_loss {:.5f} original_policy_entropy {:.5f}".format(
+                            loss.item(),
+                            detached_losses["value-loss"],
+                            detached_losses["policy-loss"],
+                            detached_losses["policy-entropy"],
+                        )
+                    )
                     self.optimizer.step()
-                    
+
                 self.pub_model(self.model.state_dict())
-                
+
                 # if (self.idx % self.args.loss_log_interval == 0):
                 #     self.log_loss_tensorboard(loss, detached_losses)
 
-                if (self.idx % self.args.model_save_interval == 0):
-                    torch.save(self.model, os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"))
-                
-                self.idx+= 1
+                if self.idx % self.args.model_save_interval == 0:
+                    torch.save(
+                        self.model,
+                        os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"),
+                    )
+
+                self.idx += 1
