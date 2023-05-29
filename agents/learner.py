@@ -112,8 +112,10 @@ class Learner:
             if batch_args is not None:
                 # Basically, mini-batch-learning (seq, batch, feat)
                 obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
-                behav_log_probs = self.ct(F.softmax(logits, dim=-1)).log_prob(
-                    act.squeeze(-1)
+                behav_log_probs = (
+                    self.ct(F.softmax(logits, dim=-1))
+                    .log_prob(act.squeeze(-1))
+                    .unsqueeze(-1)
                 )
 
                 # epoch-learning
@@ -153,7 +155,7 @@ class Learner:
                     )
 
                     ratio = torch.exp(
-                        log_probs - behav_log_probs
+                        log_probs[:-1] - behav_log_probs[:-1]
                     )  # a/b == log(exp(a)-exp(b))
                     surr1 = ratio * advantage
                     surr2 = (
@@ -165,7 +167,7 @@ class Learner:
 
                     loss_policy = -torch.min(surr1, surr2).mean()
                     loss_value = F.smooth_l1_loss(value[:-1], td_target.detach()).mean()
-                    policy_entropy = entropy.mean()
+                    policy_entropy = entropy[:-1].mean()
 
                     # Summing all the losses together
                     loss = (
