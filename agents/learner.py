@@ -28,9 +28,9 @@ L = Lock()
 
 
 class Learner:
-    def __init__(self, args, sam_lock, model, queue):
+    def __init__(self, args, mutex, model, queue):
         self.args = args
-        self.sam_lock = sam_lock
+        self.mutex = mutex
         self.batch_queue = queue
 
         self.device = self.args.device
@@ -104,7 +104,7 @@ class Learner:
 
         while True:
             # TODO: 무리하게 세마포어 lock을 걸어버리는 게 아닐까..?
-            # with self.sam_lock():
+            # with self.mutex():
             batch_args = self.batch_queue.get()
 
             if batch_args is not None:

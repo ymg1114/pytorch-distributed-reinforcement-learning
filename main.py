@@ -8,7 +8,7 @@ import asyncio
 import numpy as np
 import multiprocessing as mp
 
-from multiprocessing import Process, Semaphore, Pipe, Queue, set_start_method
+from multiprocessing import Process, Pipe, Queue, set_start_method
 from datetime import datetime
 from copy import deepcopy
 from types import SimpleNamespace
@@ -20,7 +20,12 @@ from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
 from threading import Thread
-from utils.utils import KillProcesses, SaveErrorLog, Params, SamLock
+from utils.utils import KillProcesses, SaveErrorLog, Params
+from utils.lock import Mutex
+
+
+mutex = Mutex()
+
 
 # TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
 DataFrameKeyword = [
@@ -45,14 +50,14 @@ def manager_run(args, *obs_shape):
     asyncio.run(manager.data_chain())
 
 
-def storage_run(args, sam_lock, dataframe_keyword, queue, *obs_shape):
-    storage = LearnerStorage(args, sam_lock, dataframe_keyword, queue, obs_shape)
+def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape):
+    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape)
     asyncio.run(storage.shared_memory_chain())
 
 
-def run(args, sam_lock, learner_model, child_procs, queue):
+def run(args, mutex, learner_model, child_procs, queue):
     [p.start() for p in child_procs]
-    learner = Learner(args, sam_lock, learner_model, queue)
+    learner = Learner(args, mutex, learner_model, queue)
     learner.learning()
     # [p.join() for p in child_procs]
 
@@ -134,9 +139,6 @@ if __name__ == "__main__":
         env.close()
 
         # src_conn, dst_conn = Pipe()
-        # sam = Semaphore(1) # 동시 접근 허용 프로세스 1개
-        sam_lock = partial(SamLock, sam=Semaphore(1))
-
         child_procs = []
         # daemonic process is not allowed to create child process
         m = Process(
@@ -170,12 +172,12 @@ if __name__ == "__main__":
         queue = mp.Queue(1024)
         s = Process(
             target=storage_run,
-            args=(args, sam_lock, DataFrameKeyword, queue, *obs_shape),
+            args=(args, mutex, DataFrameKeyword, queue, *obs_shape),
             daemon=True,
         )  # child-processes
         child_procs.append(s)
 
-        run(args, sam_lock, learner_model, child_procs, queue)  # main-process
+        run(args, mutex, learner_model, child_procs, queue)  # main-process
 
     except:
         log_dir = os.path.join(os.getcwd(), "logs")

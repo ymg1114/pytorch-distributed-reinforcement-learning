@@ -96,30 +96,6 @@ def obs_preprocess(obs, need_conv):
         return torch.from_numpy(obs).unsqueeze(0).to(torch.float32)  # (D) -> (1, D)
 
 
-@contextmanager
-def SamLock(sam):
-    sam.acquire()
-    try:
-        yield
-    finally:
-        sam.release()
-    return
-
-
-class ParameterServer:
-    def __init__(self, lock):
-        self.lock = lock
-        self.weight = None
-
-    def pull(self):
-        with self.lock:
-            return self.weight
-
-    def push(self, weigth):
-        with self.lock:
-            self.weight = weigth
-
-
 class Protocol(Enum):
     Model = auto()
     Rollout = auto()

@@ -18,7 +18,7 @@ local = "127.0.0.1"
 
 
 class LearnerStorage:
-    def __init__(self, args, sam_lock, dataframe_keyword, queue, obs_shape):
+    def __init__(self, args, mutex, dataframe_keyword, queue, obs_shape):
         self.args = args
         self.dataframe_keyword = dataframe_keyword
         self.obs_shape = obs_shape
@@ -27,7 +27,7 @@ class LearnerStorage:
 
         self.stat_list = []
         self.stat_log_len = 20
-        self.sam_lock = sam_lock
+        self.mutex = mutex
         self._init = False
 
         self.batch_queue = queue
@@ -154,7 +154,7 @@ class LearnerStorage:
         while True:
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Rollout:
-                # with self.sam_lock():
+                # with self.mutex():
                 await self.rollout_assembler.push(data)
 
             elif protocol is Protocol.Stat:
@@ -172,7 +172,7 @@ class LearnerStorage:
 
     async def proxy_q_chain(self):
         while True:
-            # with self.sam_lock():
+            # with self.mutex():
             if self.is_sh_ready():
                 batch_args = self.get_batch_from_sh_memory()
                 await self.proxy_queue.put(batch_args)
@@ -182,7 +182,7 @@ class LearnerStorage:
 
     async def put_batch_to_batch_q(self):
         while True:
-            # with self.sam_lock():
+            # with self.mutex():
             batch_args = await self.proxy_queue.get()
             self.batch_queue.put(batch_args)
 
