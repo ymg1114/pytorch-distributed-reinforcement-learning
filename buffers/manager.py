@@ -15,7 +15,7 @@ from threading import Thread
 local = "127.0.0.1"
 
 
-L = Lock()
+# L = Lock() # 사용하지 않는 코드
 
 
 class Manager:

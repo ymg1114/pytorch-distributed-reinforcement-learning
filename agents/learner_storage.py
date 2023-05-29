@@ -122,7 +122,10 @@ class LearnerStorage:
         assert name in self.dataframe_keyword
 
         # shm = shared_memory.SharedMemory(create=True, size=np_array.nbytes)
-        shm_array = mp.Array("d", len(np_array))
+        shm_array = mp.Array(
+            "d", len(np_array)
+        )  # shm_array: 공유메모리 / shm_array.get_obj(): 공유메모리 공간의 메모리 스페이스 주소
+
         # setattr(self, f"sh_{name}", np.frombuffer(buffer=shm.buf, dtype=np_array.dtype, count=-1))
         # setattr(self, f"sh_{name}_ref", shm.name)
         # return np_array.shape, np_array.dtype, shm.name, shm.buf # 공유메모리의 (이름, 버퍼)

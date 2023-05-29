@@ -3,7 +3,7 @@ import time
 
 from utils.lock import Lock
 
-L = Lock()
+L = Lock()  # 사용하지 않는 코드
 
 
 class LearnerBatchStorage:
@@ -64,7 +64,8 @@ class LearnerBatchStorage:
 
     def roll_to_batch(self, q_workers):
         for _ in range(self.args.batch_size):
-            rollout = L.get(q_workers)
+            # rollout = L.get(q_workers)
+            rollout = q_workers.get()
 
             obs = rollout[0]
             act = rollout[1]

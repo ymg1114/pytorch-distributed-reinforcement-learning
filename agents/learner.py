@@ -24,7 +24,7 @@ from tensorboardX import SummaryWriter
 
 local = "127.0.0.1"
 
-L = Lock()
+# L = Lock() # 사용하지 않는 코드
 
 
 class Learner:
@@ -59,10 +59,12 @@ class Learner:
             f"tcp://{local}:{self.args.learner_port+1}"
         )  # publish fresh learner-model
 
+    # 사용하지 않는 코드
     # def data_subscriber(self, q_batchs):
     #     self.l_t = Thread(target=self.receive_data, args=(q_batchs,), daemon=True)
     #     self.l_t.start()
 
+    # 사용하지 않는 코드
     # def receive_data(self, q_batchs):
     #     while True:
     #         protocol, data = decode(*self.sub_socket.recv_multipart())
@@ -103,9 +105,9 @@ class Learner:
         self.idx = 0
 
         while True:
-            # TODO: 무리하게 세마포어 lock을 걸어버리는 게 아닐까..?
-            # with self.mutex():
-            batch_args = self.batch_queue.get()
+            batch_args = None
+            with self.mutex():
+                batch_args = self.batch_queue.get()
 
             if batch_args is not None:
                 # Basically, mini-batch-learning (seq, batch, feat)
