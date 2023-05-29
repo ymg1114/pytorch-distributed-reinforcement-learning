@@ -34,7 +34,7 @@ class Mutex:
 
     # 1개 (티겟 1개) 프로세스만 공유 자원에 접근하는 것을 허용.
     @contextmanager
-    def mutex(self):
+    def lock(self):
         self._mutex.acquire()
         try:
             yield

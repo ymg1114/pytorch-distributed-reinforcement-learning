@@ -34,7 +34,6 @@ class LearnerStorage:
 
         self.zeromq_set()
         self.init_shared_memory()
-        self.rollout_assembler = RolloutAssembler(args)
         self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
 
     # def __del__(self):
@@ -138,6 +137,8 @@ class LearnerStorage:
 
     async def shared_memory_chain(self):
         self.proxy_queue = asyncio.Queue(1024)
+        self.rollout_assembler = RolloutAssembler(self.args, asyncio.Queue(1024))
+
         tasks = [
             asyncio.create_task(self.retrieve_data_from_worker()),
             asyncio.create_task(self.build_as_batch()),
@@ -157,7 +158,7 @@ class LearnerStorage:
         while True:
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Rollout:
-                # with self.mutex():
+                # with self.mutex.lock():
                 await self.rollout_assembler.push(data)
 
             elif protocol is Protocol.Stat:
@@ -175,7 +176,7 @@ class LearnerStorage:
 
     async def proxy_q_chain(self):
         while True:
-            # with self.mutex():
+            # with self.mutex.lock():
             if self.is_sh_ready():
                 batch_args = self.get_batch_from_sh_memory()
                 await self.proxy_queue.put(batch_args)
@@ -185,7 +186,7 @@ class LearnerStorage:
 
     async def put_batch_to_batch_q(self):
         while True:
-            # with self.mutex():
+            # with self.mutex.lock():
             batch_args = await self.proxy_queue.get()
             self.batch_queue.put(batch_args)
 
@@ -244,7 +245,7 @@ class LearnerStorage:
             self.sh_hx_batch[sq * num * hs : sq * (num + 1) * hs] = flatten(hx)
             self.sh_cx_batch[sq * num * hs : sq * (num + 1) * hs] = flatten(cx)
 
-            num += 1
+            self.sh_data_num.value += 1
 
     def is_sh_ready(self):
         # sq = self.args.seq_len

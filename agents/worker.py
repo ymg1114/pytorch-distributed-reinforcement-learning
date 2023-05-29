@@ -24,7 +24,7 @@ class Env:
         return obs_preprocess(obs, self.args.need_conv)
 
     def step(self, act):
-        obs, rew, done, _, _ = self._env_.step(act)
+        obs, rew, done, _, _ = self._env.step(act)
         return obs_preprocess(obs, self.args.need_conv), rew, done
 
 

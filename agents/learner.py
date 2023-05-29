@@ -106,7 +106,7 @@ class Learner:
 
         while True:
             batch_args = None
-            with self.mutex():
+            with self.mutex.lock():
                 batch_args = self.batch_queue.get()
 
             if batch_args is not None:
