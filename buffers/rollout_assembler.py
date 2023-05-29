@@ -34,22 +34,21 @@ class RolloutAssembler:
         assert "cx" in data
         assert "id" in data
 
-        _id = data["id"]  # epi. 별 독립적인 게임 id
+        _id = data["id"]  # epi. 별 독립적인 경기 id
 
-        if _id in self.roll_q:
+        if _id in self.roll_q:  # 기존 경기에 데이터 추가
             await self.roll_q[_id].put(data)
         else:
             if len(self.roll_q) > 0:
-                __id, _ = heappop(
-                    list(self.roll_q.items())
-                )  # 데이터의 크기/값 이 가장 작은 Trajectory 추출
-                # TODO: heappop이 의도대로 작동하는지 검토 필요
-                t = self.roll_q.pop(__id)
+                _, __id = heappop(
+                    [(tj.len, id) for id, tj in self.roll_q.items()]
+                )  # 데이터의 크기 (roll 개수)가 가장 작은 Trajectory 추출
+                __tj = self.roll_q.pop(__id)
                 data["is_fir"] = True
             else:
-                t = Trajectory(self.seq_len)  # Trajectory 초기화를 통한 할당
-            await t.put(data)
-            self.roll_q[_id] = t
+                __tj = Trajectory(self.seq_len)  # Trajectory 객체 생성을 통한 할당
+            await __tj.put(data)
+            self.roll_q[_id] = __tj
 
         # 롤아웃 시퀀스 길이가 충족된 경우
         if self.roll_q[_id].len >= self.seq_len:
