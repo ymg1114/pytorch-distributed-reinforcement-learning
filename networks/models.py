@@ -148,12 +148,8 @@ class ConvLSTM(nn.Module):
         self, h, w, c, n_outputs, sequence_length, hidden_size, body=BodyType.SHALLOW
     ):
         super(ConvLSTM, self).__init__()
-
-        # Keeping some infos
         self.input_size = (c, h, w)
-        self.n_outputs = n_outputs
-        self.sequence_length = sequence_length
-        self.hidden_size = hidden_size
+        self.init_param(n_outputs, sequence_length, hidden_size)
 
         # Sequential baseblocks
         if body == BodyType.SHALLOW:
@@ -171,14 +167,26 @@ class ConvLSTM(nn.Module):
         self.fc = nn.Linear(in_features=self.flatten_dim, out_features=self.hidden_size)
 
         self.body = nn.Sequential(self.convs, Flatten(), nn.ReLU(), self.fc, nn.ReLU())
+        self.after_torso()
 
+    def init_param(self, n_outputs, sequence_length, hidden_size):
+        # Keeping some infos
+
+        self.n_outputs = n_outputs
+        self.sequence_length = sequence_length
+        self.hidden_size = hidden_size
+
+    def after_torso(self):
         # LSTM (Memory Layer)
-        self.lstm = nn.LSTM(
-            input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=1
+        # self.lstm = nn.LSTM(
+        #     input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=1
+        # )
+        self.lstmcell = nn.LSTMCell(
+            input_size=self.hidden_size, hidden_size=self.hidden_size
         )
 
         # Allocate tensors as contiguous on GPU memory
-        self.lstm.flatten_parameters()
+        # self.lstm.flatten_parameters()
 
         # Fully conected layers for value and policy
         self.value = nn.Linear(in_features=self.hidden_size, out_features=1)
@@ -193,23 +201,16 @@ class ConvLSTM(nn.Module):
     @torch.jit.export
     def act(self, obs, lstm_hxs):
         """Performs an one-step prediction with detached gradients"""
-        x = self.body.forward(obs)  # x: (batch, feat)
 
-        x = x.unsqueeze(0)  # x: (1, batch, feat)
+        x = self.body.forward(obs)  # x: (feat,)
 
-        x, lstm_hxs = self.lstm(x, lstm_hxs)
+        hx, cx = self.lstmcell(x, lstm_hxs)
 
-        # x: (batch, feat)
-        x = x.squeeze(0)
-
-        logits = self.logits(x)
+        logits = self.logits(hx)
 
         act, logits = self._act_dist(logits)
 
-        lstm_hxs[0].detach_()
-        lstm_hxs[1].detach_()
-
-        return act.detach(), logits.detach(), lstm_hxs
+        return act.detach(), logits.detach(), (hx.detach(), cx.detach())
 
     @torch.jit.ignore
     def _act_dist(self, logits):
@@ -282,22 +283,26 @@ class ConvLSTM(nn.Module):
     def forward(self, obs, lstm_hxs, behaviour_acts):
         """
         obs : (seq, batch, d)
-        lstm_hxs : ((1, batch, hidden), (1, batch, hidden))
+        lstm_hxs : ((batch, hidden), (batch, hidden))
         behaviour_acts : (seq, batch, 1) / not one-hot, but action index
         """
+
         # Check the dimentions
         seq, batch, *sha = obs.size()
+        hx, cx = lstm_hxs
 
         obs = obs.contiguous().view(seq * batch, *sha)
         x = self.body.forward(obs)
         x = x.view(seq, batch, self.hidden_size)  # (seq, batch, hidden_size)
 
-        x, lstm_hxs = self.lstm(x, lstm_hxs)
-        lstm_hxs[0].detach_()
-        lstm_hxs[1].detach_()
+        output = []
+        for i in range(seq):
+            hx, cx = self.lstmcell(x[i], (hx, cx))
+            output.append(hx)
+        output = torch.stack(output, dim=0)
 
-        value = self.value(x)  # (seq, batch, 1)
-        logits = self.logits(x)  # (seq, batch, num_acts)
+        value = self.value(output)  # (seq, batch, 1)
+        logits = self.logits(output)  # (seq, batch, num_acts)
 
         log_probs, entropy = self._forward_dist(logits, behaviour_acts)  # current
 
@@ -322,31 +327,11 @@ class MlpLSTM(ConvLSTM):
     def __init__(self, f, n_outputs, sequence_length, hidden_size):
         nn.Module.__init__(self)
 
-        # Keeping some infos
         self.input_size = f
-        self.n_outputs = n_outputs
-        self.sequence_length = sequence_length
-        self.hidden_size = hidden_size
+        self.init_param(n_outputs, sequence_length, hidden_size)
 
         self.body = nn.Sequential(
             nn.Linear(in_features=self.input_size, out_features=self.hidden_size),
             nn.ReLU(),
         )
-
-        # LSTM (Memory Layer)
-        self.lstm = nn.LSTM(
-            input_size=self.hidden_size, hidden_size=self.hidden_size, num_layers=1
-        )
-
-        # Allocate tensors as contiguous on GPU memory
-        self.lstm.flatten_parameters()
-
-        # Fully conected layers for value and policy
-        self.value = nn.Linear(in_features=self.hidden_size, out_features=1)
-
-        self.logits = nn.Linear(
-            in_features=self.hidden_size, out_features=self.n_outputs
-        )
-
-        # Using those distributions doesn't affect the gradient calculus
-        self.CT = Categorical
+        self.after_torso()

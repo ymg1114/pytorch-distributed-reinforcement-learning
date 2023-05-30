@@ -7,8 +7,7 @@ from buffers.trajectory import Trajectory, Trajectory2
 
 
 def make_as_array(rollout_obj):
-    seq_len = len(rollout_obj.data)
-    assert seq_len > 0
+    assert rollout_obj.len > 0
 
     refrased_rollout_data = defaultdict(list)
 
@@ -63,7 +62,8 @@ class RolloutAssembler:
                     [(tj.len, id) for id, tj in self.roll_q.items()]
                 )  # 데이터의 크기 (roll 개수)가 가장 작은 Trajectory 추출
                 __tj = self.roll_q.pop(__id)
-                data["is_fir"] = torch.FloatTensor([[1.0]])
+                # __tj.data[-1]["is_fir"] = torch.FloatTensor([1.0])
+                data["is_fir"] = torch.FloatTensor([1.0])
             else:
                 __tj = Trajectory2(self.seq_len)  # Trajectory 객체 생성을 통한 할당
             __tj.put(data)

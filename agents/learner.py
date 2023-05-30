@@ -121,15 +121,15 @@ class Learner:
                 # epoch-learning
                 for _ in range(self.args.K_epoch):
                     lstm_states = (
-                        hx[0].unsqueeze(0),
-                        cx[0].unsqueeze(0),
-                    )  # (seq, batch, hidden) -> (1, batch, hidden)
+                        hx[0],
+                        cx[0],
+                    )  # (seq, batch, hidden) -> (batch, hidden)
 
                     # on-line model forwarding
                     log_probs, entropy, value = self.model(
                         obs,  # (seq, batch, *sha)
-                        lstm_states,  # ((1, batch, hidden), (1, batch, hidden))
-                        act,
+                        lstm_states,  # ((batch, hidden), (batch, hidden))
+                        act,  # (seq, batch, 1)
                     )
 
                     td_target = (

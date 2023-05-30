@@ -18,12 +18,12 @@
     "value_loss_coef": 0.5,
     "entropy_coef": 0.0005,
     "K_epoch": 1,
-    "learning_rate": 0.00001,
+    "learning_rate": 0.001,
     "clip_gradient_norm": 40,
     "log_save_interval": 50,
     "model_save_interval": 100,
     "gpu_idx": 0,
-    "num_worker": 50,
+    "num_worker": 10,
     "worker_port": 2716,
     "learner_port": 4716
 }

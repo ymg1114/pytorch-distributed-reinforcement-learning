@@ -110,9 +110,9 @@ class Worker:
             _id = int(np.random.random() * 10000000)
             # print(f"worker_name: {self.worker_name}, obs: {obs}")
             lstm_hx = (
-                torch.zeros((1, 1, self.args.hidden_size)),
-                torch.zeros((1, 1, self.args.hidden_size)),
-            )  # (h_s, c_s) / (seq, batch, hidden)
+                torch.zeros(self.args.hidden_size),
+                torch.zeros(self.args.hidden_size),
+            )  # (h_s, c_s) / (hidden,)
             self.epi_rew = 0
 
             # # init worker-buffer
@@ -128,17 +128,15 @@ class Worker:
                 # rew = np.clip(rew, self.args.reward_clip[0], self.args.reward_clip[1])
 
                 step_data = {
-                    "obs": obs,  # (1, c, h, w) or (1, D)
-                    "act": act.view(1, -1),  # (1, 1) / not one-hot, but action index
+                    "obs": obs,  # (c, h, w) or (D,)
+                    "act": act,  # (1,) / not one-hot, but action index
                     "rew": torch.from_numpy(
-                        np.array([[rew * self.args.reward_scale]])
-                    ),  # (1, 1)
+                        np.array([rew * self.args.reward_scale])
+                    ),  # (1,)
                     "logits": logits,
-                    "is_fir": torch.FloatTensor(
-                        [[1.0] if is_fir else [0.0]]
-                    ),  # (1, 1),
-                    "hx": lstm_hx[0],  # (seq, batch, hidden)
-                    "cx": lstm_hx[1],  # (seq, batch, hidden)
+                    "is_fir": torch.FloatTensor([1.0 if is_fir else 0.0]),  # (1,),
+                    "hx": lstm_hx[0],  # (hidden,)
+                    "cx": lstm_hx[1],  # (hidden,)
                     "id": _id,
                 }
 

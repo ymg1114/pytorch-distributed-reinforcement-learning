@@ -38,9 +38,11 @@ class LearnerStorage:
 
     # def __del__(self):
     #     if hasattr(self, "_init") and self._init is True:
+
     #         def del_sh(shm):
     #             shm.close()
     #             shm.unlink()
+
     #         del_sh(self.sh_obs_batch)
     #         del_sh(self.sh_act_batch)
     #         del_sh(self.sh_rew_batch)
