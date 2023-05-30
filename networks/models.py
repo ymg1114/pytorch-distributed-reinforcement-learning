@@ -171,7 +171,6 @@ class ConvLSTM(nn.Module):
 
     def init_param(self, n_outputs, sequence_length, hidden_size):
         # Keeping some infos
-
         self.n_outputs = n_outputs
         self.sequence_length = sequence_length
         self.hidden_size = hidden_size
@@ -224,6 +223,7 @@ class ConvLSTM(nn.Module):
 
         return act, logits
 
+    # 사용하지 않는 코드
     # @torch.jit.export
     # def act_greedy(self, obs, lstm_hxs):
     #     """Performs an one-step prediction with detached gradients"""
@@ -248,6 +248,7 @@ class ConvLSTM(nn.Module):
 
     #     return act.detach(), lstm_hxs
 
+    # 사용하지 않는 코드
     # def forward(self, obs, lstm_hxs, behaviour_acts):
     #     """
     #     obs : (seq+1, batch, d)
@@ -282,43 +283,43 @@ class ConvLSTM(nn.Module):
 
     def forward(self, obs, lstm_hxs, behaviour_acts):
         """
-        obs : (seq, batch, d)
+        obs : (batch, seq, d)
         lstm_hxs : ((batch, hidden), (batch, hidden))
-        behaviour_acts : (seq, batch, 1) / not one-hot, but action index
+        behaviour_acts : (batch, seq, 1) / not one-hot, but action index
         """
 
         # Check the dimentions
-        seq, batch, *sha = obs.size()
+        batch, seq, *sha = obs.size()
         hx, cx = lstm_hxs
 
-        obs = obs.contiguous().view(seq * batch, *sha)
+        obs = obs.contiguous().view(batch * seq, *sha)
         x = self.body.forward(obs)
-        x = x.view(seq, batch, self.hidden_size)  # (seq, batch, hidden_size)
+        x = x.view(batch, seq, self.hidden_size)  # (batch, seq, hidden_size)
 
         output = []
         for i in range(seq):
-            hx, cx = self.lstmcell(x[i], (hx, cx))
+            hx, cx = self.lstmcell(x[:, i], (hx, cx))
             output.append(hx)
-        output = torch.stack(output, dim=0)
+        output = torch.stack(output, dim=1)  # (batch, seq, feat)
 
-        value = self.value(output)  # (seq, batch, 1)
-        logits = self.logits(output)  # (seq, batch, num_acts)
+        value = self.value(output)  # (batch, seq, 1)
+        logits = self.logits(output)  # (batch, seq, num_acts)
 
         log_probs, entropy = self._forward_dist(logits, behaviour_acts)  # current
 
-        log_probs = log_probs.view(seq, batch, 1)
-        entropy = entropy.view(seq, batch, 1)
-        value = value.view(seq, batch, 1)
+        log_probs = log_probs.view(batch, seq, 1)
+        entropy = entropy.view(batch, seq, 1)
+        # value = value.view(batch, seq, 1)
 
         return log_probs, entropy, value
 
     @torch.jit.ignore
     def _forward_dist(self, logits, behaviour_acts):
-        probs = F.softmax(logits, dim=-1)  # (seq, batch, num_acts)
-        dist = self.CT(probs)  # (seq, batch, num_acts)
+        probs = F.softmax(logits, dim=-1)  # (batch, seq, num_acts)
+        dist = self.CT(probs)  # (batch, seq, num_acts)
 
-        log_probs = dist.log_prob(behaviour_acts.squeeze(-1))  # (seq, batch)
-        entropy = dist.entropy()  # (seq, batch)
+        log_probs = dist.log_prob(behaviour_acts.squeeze(-1))  # (batch, seq)
+        entropy = dist.entropy()  # (batch, seq)
 
         return log_probs, entropy
 

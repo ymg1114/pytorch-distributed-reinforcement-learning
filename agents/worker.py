@@ -129,7 +129,7 @@ class Worker:
 
                 step_data = {
                     "obs": obs,  # (c, h, w) or (D,)
-                    "act": act,  # (1,) / not one-hot, but action index
+                    "act": act.view(-1),  # (1,) / not one-hot, but action index
                     "rew": torch.from_numpy(
                         np.array([rew * self.args.reward_scale])
                     ),  # (1,)

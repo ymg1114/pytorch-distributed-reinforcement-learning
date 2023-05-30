@@ -289,27 +289,27 @@ class LearnerStorage:
         hs = self.args.hidden_size
         ac = self.args.action_space
 
-        # (seq, batch, feat)
+        # (batch, seq, feat)
         sh_obs_bat = LearnerStorage.copy_to_ndarray(self.sh_obs_batch).reshape(
-            (sq, bn, *sha)
+            (bn, sq, *sha)
         )
         sh_act_bat = LearnerStorage.copy_to_ndarray(self.sh_act_batch).reshape(
-            (sq, bn, 1)
+            (bn, sq, 1)
         )
         sh_rew_bat = LearnerStorage.copy_to_ndarray(self.sh_rew_batch).reshape(
-            (sq, bn, 1)
+            (bn, sq, 1)
         )
         sh_logits_bat = LearnerStorage.copy_to_ndarray(self.sh_logits_batch).reshape(
-            (sq, bn, ac)
+            (bn, sq, ac)
         )
         sh_is_fir_bat = LearnerStorage.copy_to_ndarray(self.sh_is_fir_batch).reshape(
-            (sq, bn, 1)
+            (bn, sq, 1)
         )
         sh_hx_bat = LearnerStorage.copy_to_ndarray(self.sh_hx_batch).reshape(
-            (sq, bn, hs)
+            (bn, sq, hs)
         )
         sh_cx_bat = LearnerStorage.copy_to_ndarray(self.sh_cx_batch).reshape(
-            (sq, bn, hs)
+            (bn, sq, hs)
         )
 
         return (

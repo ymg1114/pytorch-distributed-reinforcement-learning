@@ -27,6 +27,29 @@ local = "127.0.0.1"
 # L = Lock() # 사용하지 않는 코드
 
 
+def compute_gae(
+    delta,
+    gamma,
+    lambda_,
+):
+    """
+    Compute GAE.
+
+    delta: TD-errors, shape of (batch, seq, dim)
+    gamma: Discount factor.
+    lambda_: GAE lambda parameter.
+    """
+
+    gae = 0
+    returns = []
+    for step in reversed(range(delta.shape[1])):
+        d = delta[:, step]
+        gae = d + gamma * lambda_ * gae
+        returns.insert(0, gae)
+
+    return torch.stack(returns, dim=1)
+
+
 class Learner:
     def __init__(self, args, mutex, model, queue):
         self.args = args
@@ -110,7 +133,7 @@ class Learner:
                 batch_args = self.batch_queue.get()
 
             if batch_args is not None:
-                # Basically, mini-batch-learning (seq, batch, feat)
+                # Basically, mini-batch-learning (batch, seq, feat)
                 obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
                 behav_log_probs = (
                     self.ct(F.softmax(logits, dim=-1))
@@ -121,53 +144,60 @@ class Learner:
                 # epoch-learning
                 for _ in range(self.args.K_epoch):
                     lstm_states = (
-                        hx[0],
-                        cx[0],
-                    )  # (seq, batch, hidden) -> (batch, hidden)
+                        hx[:, 0],
+                        cx[:, 0],
+                    )  # (batch, seq, hidden) -> (batch, hidden)
 
                     # on-line model forwarding
                     log_probs, entropy, value = self.model(
-                        obs,  # (seq, batch, *sha)
+                        obs,  # (batch, seq, *sha)
                         lstm_states,  # ((batch, hidden), (batch, hidden))
-                        act,  # (seq, batch, 1)
+                        act,  # (batch, seq, 1)
                     )
 
                     td_target = (
-                        rew[:-1] + self.args.gamma * (1 - is_fir[1:]) * value[1:]
+                        rew[:, :-1]
+                        + self.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
                     )
-                    delta = td_target - value[:-1]
-                    delta = delta.cpu().detach().numpy()
+                    delta = td_target - value[:, :-1]
+                    delta = delta.cpu().detach()
 
+                    # 사용하지 않는 코드
                     # ppo-gae (advantage)
-                    advantages = []
-                    advantage_t = np.zeros(
-                        delta.shape[1:]
-                    )  # Terminal: (seq, batch, d) -> (batch, d)
-                    for delta_row in delta[::-1]:
-                        advantage_t = (
-                            delta_row + self.args.gamma * self.args.lmbda * advantage_t
-                        )  # recursive
-                        advantages.append(advantage_t)
-                    advantages.reverse()
-                    # advantage = torch.stack(advantages, dim=0).to(torch.float)
-                    advantage = torch.tensor(advantages, dtype=torch.float).to(
-                        self.device
-                    )
+                    # gae = []
+                    # B, S, D = delta.shape
+                    # advantage_t = np.zeros((B, D))  # Terminal: (batch, d)
+                    # for delta_row in delta[:, ::-1]:
+                    #     advantage_t = (
+                    #         delta_row + self.args.gamma * self.args.lmbda * advantage_t
+                    #     )  # recursive
+                    #     gae.append(advantage_t)
+                    # gae.reverse()
+                    # # advantage = torch.stack(gae, dim=0).to(torch.float)
+                    # advantage = torch.tensor(gae, dtype=torch.float).to(
+                    #     self.device
+                    # )
+
+                    gae = compute_gae(
+                        delta, self.args.gamma, self.args.lmbda
+                    )  # ppo-gae (advantage)
 
                     ratio = torch.exp(
-                        log_probs[:-1] - behav_log_probs[:-1]
+                        log_probs[:, :-1] - behav_log_probs[:, :-1]
                     )  # a/b == log(exp(a)-exp(b))
-                    surr1 = ratio * advantage
+                    surr1 = ratio * gae
                     surr2 = (
                         torch.clamp(
                             ratio, 1 - self.args.eps_clip, 1 + self.args.eps_clip
                         )
-                        * advantage
+                        * gae
                     )
 
                     loss_policy = -torch.min(surr1, surr2).mean()
-                    loss_value = F.smooth_l1_loss(value[:-1], td_target.detach()).mean()
-                    policy_entropy = entropy[:-1].mean()
+                    loss_value = F.smooth_l1_loss(
+                        value[:, :-1], td_target.detach()
+                    ).mean()
+                    policy_entropy = entropy[:, :-1].mean()
 
                     # Summing all the losses together
                     loss = (
@@ -206,7 +236,7 @@ class Learner:
                 if self.idx % self.args.model_save_interval == 0:
                     torch.save(
                         self.model,
-                        os.path.join(self.args.model_dir, f"impala_{self.idx}.pt"),
+                        os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
                     )
 
                 self.idx += 1
