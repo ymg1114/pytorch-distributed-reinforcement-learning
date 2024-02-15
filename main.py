@@ -68,9 +68,6 @@ if __name__ == "__main__":
     parser.add_argument("--is-gray", type=bool, default=p.gray)
     parser.add_argument("--hidden-size", type=int, default=p.hidden_size)
 
-    parser.add_argument("--action-repeat", type=bool, default=p.repeat_actions)
-    parser.add_argument("--frame-stack", type=bool, default=p.frame_stack)
-
     parser.add_argument("--K-epoch", type=float, default=p.K_epoch)
     parser.add_argument("--lr", type=float, default=p.learning_rate)
 

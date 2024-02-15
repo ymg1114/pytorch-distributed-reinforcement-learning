@@ -1,6 +1,7 @@
 import os, sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+import time
 import zmq
 import gym
 import torch
@@ -104,6 +105,7 @@ class Worker:
                     ),  # (1,)
                     "logits": logits,
                     "is_fir": torch.FloatTensor([1.0 if is_fir else 0.0]),  # (1,),
+                    "done": torch.FloatTensor([1.0 if done else 0.0]),  # (1,),
                     "hx": lstm_hx[0],  # (hidden,)
                     "cx": lstm_hx[1],  # (hidden,)
                     "id": _id,

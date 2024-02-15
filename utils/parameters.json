@@ -6,8 +6,6 @@
     "gray": false,
     "hidden_size": 32,
     "time_horizon": 500,
-    "repeat_actions": 4,
-    "frame_stack": 4,
     "reward_scale": 0.01,
     "unroll_length": 5,
     "batch_size": 64,
@@ -16,14 +14,14 @@
     "eps_clip": 0.1,
     "policy_loss_coef": 1.0,
     "value_loss_coef": 0.5,
-    "entropy_coef": 0.0005,
+    "entropy_coef": 0.0001,
     "K_epoch": 1,
-    "learning_rate": 0.001,
+    "learning_rate": 0.0001,
     "clip_gradient_norm": 40,
     "log_save_interval": 50,
     "model_save_interval": 100,
     "gpu_idx": 0,
-    "num_worker": 1,
-    "worker_port": 2716,
-    "learner_port": 4716
+    "num_worker": 5,
+    "worker_port": 27165,
+    "learner_port": 47165
 }

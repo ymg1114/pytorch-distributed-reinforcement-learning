@@ -58,7 +58,7 @@ class Manager:
     async def pub_data(self):
         while True:
             if len(self.data_q) > 0:
-                protocol, data = self.data_q.pop()
+                protocol, data = self.data_q.popleft()  # FIFO
                 if protocol is Protocol.Rollout:
                     await self.pub_socket.send_multipart(
                         [*encode(Protocol.Rollout, data)]
