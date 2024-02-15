@@ -1,4 +1,3 @@
-import asyncio
 import torch
 
 from collections import defaultdict
@@ -27,19 +26,9 @@ class RolloutAssembler:
         self.args = args
         self.seq_len = args.seq_len
         self.roll_q = dict()
-        # self.ready_roll = list()
         self.ready_roll = ready_roll
 
-    # async def pop(self):
-    #     while len(self.ready_roll) > 0:
-
-    #         await asyncio.sleep(0.01)
-    #         return heappop(self.ready_roll)
-
     async def pop(self):
-        # while self.ready_roll.qsize() > 0:
-
-        #     await asyncio.sleep(0.01)
         return await self.ready_roll.get()
 
     async def push(self, data):
@@ -62,7 +51,6 @@ class RolloutAssembler:
                     [(tj.len, id) for id, tj in self.roll_q.items()]
                 )  # 데이터의 크기 (roll 개수)가 가장 작은 Trajectory 추출
                 __tj = self.roll_q.pop(__id)
-                # __tj.data[-1]["is_fir"] = torch.FloatTensor([1.0])
                 data["is_fir"] = torch.FloatTensor([1.0])
             else:
                 __tj = Trajectory2(self.seq_len)  # Trajectory 객체 생성을 통한 할당

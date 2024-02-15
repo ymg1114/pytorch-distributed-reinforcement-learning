@@ -51,27 +51,3 @@ class Mutex:
         with self.mutex():
             queue.put(data)
         return
-
-
-@contextmanager
-def SamLock(sam):
-    sam.acquire()
-    try:
-        yield
-    finally:
-        sam.release()
-    return
-
-
-class ParameterServer:
-    def __init__(self, lock):
-        self.lock = lock
-        self.weight = None
-
-    def pull(self):
-        with self.lock:
-            return self.weight
-
-    def push(self, weigth):
-        with self.lock:
-            self.weight = weigth

@@ -1,17 +1,12 @@
-import torch
 import zmq
 import zmq.asyncio
 import asyncio
-import time
+
 import numpy as np
-from collections import deque
 import multiprocessing as mp
-from multiprocessing import shared_memory
 
 from buffers.rollout_assembler import RolloutAssembler
-from utils.utils import Protocol, mul, encode, decode, flatten, to_torch, counted
-from utils.lock import Lock
-from threading import Thread
+from utils.utils import Protocol, mul, decode, flatten, to_torch, counted
 from tensorboardX import SummaryWriter
 
 local = "127.0.0.1"
@@ -22,8 +17,6 @@ class LearnerStorage:
         self.args = args
         self.dataframe_keyword = dataframe_keyword
         self.obs_shape = obs_shape
-        # self.device = self.args.device
-        self.device = torch.device("cpu")
 
         self.stat_list = []
         self.stat_log_len = 20
@@ -122,15 +115,10 @@ class LearnerStorage:
     def set_shared_memory(self, np_array, name):
         assert name in self.dataframe_keyword
 
-        # shm = shared_memory.SharedMemory(create=True, size=np_array.nbytes)
         shm_array = mp.Array(
             "d", len(np_array)
-        )  # shm_array: 공유메모리 / shm_array.get_obj(): 공유메모리 공간의 메모리 스페이스 주소
+        )
 
-        # setattr(self, f"sh_{name}", np.frombuffer(buffer=shm.buf, dtype=np_array.dtype, count=-1))
-        # setattr(self, f"sh_{name}_ref", shm.name)
-        # return np_array.shape, np_array.dtype, shm.name, shm.buf # 공유메모리의 (이름, 버퍼)
-        # return np.frombuffer(buffer=shm.buf, dtype=np_array.dtype, count=-1)
         return np.frombuffer(buffer=shm_array.get_obj(), dtype=np_array.dtype, count=-1)
 
     def reset_data_num(self):
@@ -213,7 +201,6 @@ class LearnerStorage:
 
         for k, v in data_dict.items():
             tag = f"worker/{len}-game-mean-stat-of-{k}"
-            # x = self.idx
             x = self.log_stat_tensorboard.calls * len  # global game counts
             y = v
             self.writer.add_scalar(tag, y, x)
@@ -250,35 +237,13 @@ class LearnerStorage:
             self.sh_data_num.value += 1
 
     def is_sh_ready(self):
-        # sq = self.args.seq_len
         bn = self.args.batch_size
-
-        # assert "batch_num" in self.dataframe_keyword
-
-        # nshape = self.shm_ref["batch_num"][0]
-        # ndtype = self.shm_ref["batch_num"][1]
-        # nshm = self.shm_ref["batch_num"][2]
-        # bshm = self.shm_ref["batch_num"][3]
-
-        # shm_obj = shared_memory.SharedMemory(name=nshm)
-        # self.sh_data_num = np.frombuffer(buffer=bshm, dtype=ndtype)
-        # self.sh_data_num = np.frombuffer(buffer=shm_obj.buf, dtype=ndtype)
-        # self.sh_data_num = np.ndarray(nshape, dtype=ndtype, buffer=bshm)
-        # if (self.sh_data_num >= self.args.batch_size).item():
-        if self.sh_data_num.value >= bn:
-            return True
-        else:
-            return False
+        val = self.sh_data_num.value
+        return True if val >= bn else False
 
     @staticmethod
     def copy_to_ndarray(src):
-        # shm_obj = shared_memory.SharedMemory(name=nshm)
         dst = np.empty(src.shape, dtype=src.dtype)
-        # src = np.frombuffer(buffer=shm_obj.buf, dtype=ndtype)
-        # src = np.frombuffer(buffer=bshm, dtype=ndtype)
-
-        # return np.frombuffer(buffer=shm_obj.buf, dtype=ndtype)
-        # return np.ndarray(nshape, dtype=ndtype, buffer=bshm)
         np.copyto(dst, src)  # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
         return dst
 

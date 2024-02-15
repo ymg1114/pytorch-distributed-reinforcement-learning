@@ -1,4 +1,4 @@
-import os, sys
+import os
 import cv2
 import json
 import torch
@@ -8,14 +8,10 @@ import pickle
 import blosc2
 import numpy as np
 import torchvision.transforms as T
-import torch.multiprocessing as mp
 
-from contextlib import contextmanager
 from enum import Enum, auto
 from pathlib import Path
-from signal import SIGTERM  # or SIGKILL
-from sys import platform
-from numpy import dtype
+
 from types import SimpleNamespace
 
 
@@ -29,10 +25,6 @@ flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float64)
 
 
 to_torch = lambda nparray: torch.from_numpy(nparray).type(torch.float32)
-
-
-# def str2bool(v):
-#       return v.lower() in ("yes", "Yes", "true", "True, "T", t", "1")
 
 
 def make_gpu_batch(*args, device):
@@ -98,46 +90,6 @@ class Protocol(Enum):
     Model = auto()
     Rollout = auto()
     Stat = auto()
-
-
-# def KillProcesses():
-#     # python main.py로 실행된 프로세스를 찾음
-#     for proc in psutil.process_iter():
-#         try: # 프로세스 이름, PID값 가져오기
-#             processName = proc.name()
-#             processID   = proc.pid
-#             if processName[:6] == "python": # 윈도우는 python.exe로 올라옴
-#                 commandLine = proc.cmdline()
-
-#                 # 동일한 프로세스 확인. code 확인
-#                 if 'main.py' in commandLine:
-#                     parent_pid = processID # PID
-#                     parent = psutil.Process(parent_pid) # PID 찾기
-
-#                     for child in parent.children(recursive=True): #자식-부모 종료
-#                         child.kill()
-
-#                     parent.kill()
-#             else:
-#                 print(processName, ' ', proc.cmdline(), ' - ', processID)
-
-#         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess): #예외처리
-#             pass
-
-
-# def KillProcesses():
-#     global Params
-#     WORKER_PORTS = [Params.worker_port]
-#     LEARNER_PORTS = [Params.learner_port, Params.learner_port+1]
-
-#     for proc in psutil.process_iter():
-#         for conns in proc.connections(kind='inet'):
-#             for port in WORKER_PORTS+LEARNER_PORTS:
-#                 if conns.laddr.port == port:
-#                     try:
-#                         proc.send_signal(SIGTERM) # or SIGKILL
-#                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess): #예외처리
-#                         pass
 
 
 def KillProcesses(pid):

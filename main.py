@@ -1,25 +1,20 @@
-import os, sys
+import os
 import argparse
 import gym
-import json
+
 import torch
 import traceback
 import asyncio
-import numpy as np
 import multiprocessing as mp
 
-from multiprocessing import Process, Pipe, Queue, set_start_method
+from multiprocessing import Process
 from datetime import datetime
-from copy import deepcopy
-from types import SimpleNamespace
-from functools import partial
 
 from agents.learner import Learner
 from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
-from threading import Thread
 from utils.utils import KillProcesses, SaveErrorLog, Params
 from utils.lock import Mutex
 
@@ -112,7 +107,7 @@ if __name__ == "__main__":
 
     try:
         # set_start_method("spawn")
-        print("spawn init method run")
+        # print("spawn init method run")
 
         dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
         args.result_dir = os.path.join("results", str(dt_string))
@@ -129,18 +124,14 @@ if __name__ == "__main__":
         print("Action Space: ", n_outputs)
         print("Observation Space: ", env.observation_space.shape)
 
-        # 현재 openai-gym에 한정함
-        if args.need_conv and len(env.observation_space.shape) > 1:
-            M = __import__("networks.models", fromlist=[None]).ConvLSTM
-            obs_shape = [p.H, p.W, env.observation_space.shape[2]]
-        else:
-            M = __import__("networks.models", fromlist=[None]).MlpLSTM
-            obs_shape = [env.observation_space.shape[0]]
+        # 현재 openai-gym의 "CartPole-v1" 환경만 한정
+        assert not args.need_conv or len(env.observation_space.shape) <= 1
+        M = __import__("networks.models", fromlist=[None]).MlpLSTM
+        obs_shape = [env.observation_space.shape[0]]
         env.close()
 
-        # src_conn, dst_conn = Pipe()
         child_procs = []
-        # daemonic process is not allowed to create child process
+
         m = Process(
             target=manager_run, args=(args, *obs_shape), daemon=True
         )  # child-processes
@@ -148,18 +139,15 @@ if __name__ == "__main__":
 
         learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
         learner_model.to(args.device)
-        # learner_model.share_memory() # 공유메모리 사용
         learner_model_state_dict = learner_model.cpu().state_dict()
 
         for i in range(args.num_worker):
             print("Build Worker {:d}".format(i))
             worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
             worker_model.to(torch.device("cpu"))
-            # worker_model.share_memory() # 공유메모리 사용
             worker_model.load_state_dict(learner_model_state_dict)
-
             worker_name = "worker_" + str(i)
-            # daemonic process is not allowed to create child process
+
             w = Process(
                 target=worker_run,
                 args=(args, worker_model, worker_name, args.worker_port, *obs_shape),
@@ -167,8 +155,6 @@ if __name__ == "__main__":
             )  # child-processes
             child_procs.append(w)
 
-        # writer = SummaryWriter(log_dir=args.result_dir) # tensorboard-log
-        # queue = asyncio.Queue(1024)
         queue = mp.Queue(1024)
         s = Process(
             target=storage_run,

@@ -1,13 +1,11 @@
 import os, sys
-
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-import time
+
 import zmq
 import gym
 import torch
 import numpy as np
 
-from threading import Thread
 from utils.utils import Protocol, encode, decode
 from utils.utils import obs_preprocess
 
@@ -52,25 +50,6 @@ class Worker:
         )  # subscribe model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
-    # def model_subscriber(self):
-    #     self.w_t = Thread(target=self.refresh_models, daemon=True)
-    #     self.w_t.start()
-
-    # def refresh_models(self):
-    #     while True:
-    #         try:
-    #             protocol, data = decode(*self.sub_socket.recv_multipart(flags=zmq.NOBLOCK))
-    #             if protocol is Protocol.Model:
-    #                 model_state_dict = {k: v.to('cpu') for k, v in data.items()}
-    #                 if model_state_dict:
-    #                     self.model.load_state_dict(model_state_dict)  # reload learned-model from learner
-    #                     # print( f'{self.worker_name}: Received fresh model from learner !' )
-    #         except zmq.Again as e:
-    #             # print("No model-weight received yet")
-    #             pass
-
-    #         time.sleep(0.01)
-
     def pub_rollout2(self, **step_data):
         self.pub_socket.send_multipart([*encode(Protocol.Rollout, step_data)])
         # print(f"worker_name: {self.worker_name} pub rollout to manager!")
@@ -89,12 +68,6 @@ class Worker:
         except zmq.Again as e:
             # print("No model-weight received yet")
             pass
-
-    # # BLOCK
-    # def req_model(self):
-    #     model_state_dict = self.sub_socket.recv_pyobj()
-    #     if model_state_dict:
-    #         self.model.load_state_dict( model_state_dict )  # reload learned-model from learner
 
     def pub_stat(self):
         stat = {}
@@ -115,9 +88,6 @@ class Worker:
             )  # (h_s, c_s) / (hidden,)
             self.epi_rew = 0
 
-            # # init worker-buffer
-            # self.buffer_reset()
-
             is_fir = True  # first frame
             for _ in range(self.args.time_horizon):
                 self.req_model()  # every-step
@@ -125,7 +95,6 @@ class Worker:
                 next_obs, rew, done = self.env.step(act.item())
 
                 self.epi_rew += rew
-                # rew = np.clip(rew, self.args.reward_clip[0], self.args.reward_clip[1])
 
                 step_data = {
                     "obs": obs,  # (c, h, w) or (D,)
@@ -146,7 +115,7 @@ class Worker:
                 obs = next_obs
                 lstm_hx = lstm_hx_next
 
-                time.sleep(0.1)
+                # time.sleep(0.1)
 
                 if done:
                     break

@@ -1,30 +1,18 @@
-import os, sys
+import os
 import zmq
-import asyncio
+
 import torch
-import pickle
-import time
-import numpy as np
-from multiprocessing import shared_memory, Process, Queue
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.multiprocessing as mp
 
 from torch.distributions import Categorical
 from functools import partial
-from collections import deque
-from agents.learner_storage import LearnerStorage
-from utils.utils import Protocol, encode, decode, make_gpu_batch
-from utils.lock import Lock
-from threading import Thread
-from torch.optim import RMSprop, Adam
 
-# from buffers.batch_buffer import LearnerBatchStorage
+from utils.utils import Protocol, encode, make_gpu_batch
+from torch.optim import Adam
+
 from tensorboardX import SummaryWriter
 
 local = "127.0.0.1"
-
-# L = Lock() # 사용하지 않는 코드
 
 
 def compute_gae(
@@ -58,13 +46,9 @@ class Learner:
 
         self.device = self.args.device
         self.model = model.to(args.device)
-        # self.model.share_memory() # make other processes can assess
-        # self.optimizer = RMSprop(self.model.parameters(), lr=self.args.lr)
+
         self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
         self.ct = Categorical
-
-        # self.q_workers = mp.Queue(maxsize=args.batch_size) # q for multi-worker-rollout
-        # self.batch_buffer = LearnerBatchStorage(args, obs_shape)
 
         self.to_gpu = partial(make_gpu_batch, device=self.device)
 
@@ -81,31 +65,6 @@ class Learner:
         self.pub_socket.bind(
             f"tcp://{local}:{self.args.learner_port+1}"
         )  # publish fresh learner-model
-
-    # 사용하지 않는 코드
-    # def data_subscriber(self, q_batchs):
-    #     self.l_t = Thread(target=self.receive_data, args=(q_batchs,), daemon=True)
-    #     self.l_t.start()
-
-    # 사용하지 않는 코드
-    # def receive_data(self, q_batchs):
-    #     while True:
-    #         protocol, data = decode(*self.sub_socket.recv_multipart())
-    #         if protocol is Protocol.Batch:
-    #             if q_batchs.qsize() == q_batchs._maxsize:
-    #                 L.get(q_batchs)
-    #             L.put(q_batchs, data)
-
-    #         elif protocol is Protocol.Stat:
-    #             self.stat_list.append(data["mean_stat"])
-    #             if len(self.stat_list) >= self.stat_log_len:
-    #                 mean_stat = self.process_stat()
-    #                 self.log_stat_tensorboard({"log_len": self.stat_log_len, "mean_stat": mean_stat})
-    #                 self.stat_list = []
-    #         else:
-    #             assert False, f"Wrong protocol: {protocol}"
-
-    #         time.sleep(0.01)
 
     def pub_model(self, model_state_dict):
         self.pub_socket.send_multipart([*encode(Protocol.Model, model_state_dict)])
@@ -162,22 +121,6 @@ class Learner:
                     delta = td_target - value[:, :-1]
                     delta = delta.cpu().detach()
 
-                    # 사용하지 않는 코드
-                    # ppo-gae (advantage)
-                    # gae = []
-                    # B, S, D = delta.shape
-                    # advantage_t = np.zeros((B, D))  # Terminal: (batch, d)
-                    # for delta_row in delta[:, ::-1]:
-                    #     advantage_t = (
-                    #         delta_row + self.args.gamma * self.args.lmbda * advantage_t
-                    #     )  # recursive
-                    #     gae.append(advantage_t)
-                    # gae.reverse()
-                    # # advantage = torch.stack(gae, dim=0).to(torch.float)
-                    # advantage = torch.tensor(gae, dtype=torch.float).to(
-                    #     self.device
-                    # )
-
                     gae = compute_gae(
                         delta, self.args.gamma, self.args.lmbda
                     )  # ppo-gae (advantage)
@@ -199,14 +142,12 @@ class Learner:
                     ).mean()
                     policy_entropy = entropy[:, :-1].mean()
 
-                    # Summing all the losses together
                     loss = (
                         self.args.policy_loss_coef * loss_policy
                         + self.args.value_loss_coef * loss_value
                         - self.args.entropy_coef * policy_entropy
                     )
 
-                    # These are only used for the statistics
                     detached_losses = {
                         "policy-loss": loss_policy.detach().cpu(),
                         "value-loss": loss_value.detach().cpu(),

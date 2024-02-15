@@ -1,29 +1,19 @@
-import torch
 import zmq
 import zmq.asyncio
-import time
+
 import asyncio
 import numpy as np
 from collections import deque
-import multiprocessing as mp
-from multiprocessing import shared_memory
 
-from utils.utils import Protocol, mul, encode, decode
-from utils.lock import Lock
-from threading import Thread
+from utils.utils import Protocol, encode, decode
 
 local = "127.0.0.1"
-
-
-# L = Lock() # 사용하지 않는 코드
 
 
 class Manager:
     def __init__(self, args, worker_port, obs_shape):
         self.args = args
         self.obs_shape = obs_shape
-        # self.device = self.args.device
-        self.device = torch.device("cpu")
 
         self.data_q = deque(maxlen=1024)
 
