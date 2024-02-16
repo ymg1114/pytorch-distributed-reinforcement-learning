@@ -10,7 +10,7 @@ import numpy as np
 from utils.utils import Protocol, encode, decode
 from utils.utils import obs_preprocess
 
-local = "127.0.0.1"
+W_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
 
 
 class Env:
@@ -29,8 +29,8 @@ class Env:
 
 class Worker:
     def __init__(self, args, model, worker_name, port, obs_shape):
-        self.device = torch.device("cpu")
         self.args = args
+        self.device = args.device  # cpu
         self.env = Env(args)
 
         self.model = model
@@ -47,11 +47,11 @@ class Worker:
 
         # worker <-> manager
         self.pub_socket = context.socket(zmq.PUB)
-        self.pub_socket.connect(f"tcp://{local}:{port}")  # publish rollout, stat
+        self.pub_socket.connect(f"tcp://{W_IP}:{port}")  # publish rollout, stat
 
         self.sub_socket = context.socket(zmq.SUB)
         self.sub_socket.connect(
-            f"tcp://{local}:{self.args.learner_port+1}"
+            f"tcp://{W_IP}:{self.args.learner_port+1}"
         )  # subscribe model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 

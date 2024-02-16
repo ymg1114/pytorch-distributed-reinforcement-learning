@@ -25,14 +25,16 @@ class MlpLSTM(nn.Module):
         self.lstmcell = nn.LSTMCell(
             input_size=self.hidden_size, hidden_size=self.hidden_size
         )
+        
+        # value
         self.value = nn.Linear(in_features=self.hidden_size, out_features=1)
-
+        
+        # policy
         self.logits = nn.Linear(
             in_features=self.hidden_size, out_features=self.n_outputs
         )
         self.CT = Categorical
 
-    @torch.jit.export
     def act(self, obs, lstm_hxs):
         x = self.body.forward(obs)  # x: (feat,)
 

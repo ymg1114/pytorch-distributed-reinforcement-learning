@@ -9,7 +9,7 @@ from buffers.rollout_assembler import RolloutAssembler
 from utils.utils import Protocol, mul, decode, flatten, to_torch, counted
 from tensorboardX import SummaryWriter
 
-local = "127.0.0.1"
+LS_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
 
 
 class LearnerStorage:
@@ -53,7 +53,7 @@ class LearnerStorage:
 
         # learner-storage <-> manager
         self.sub_socket = context.socket(zmq.SUB)  # subscribe batch-data, stat-data
-        self.sub_socket.bind(f"tcp://{local}:{self.args.learner_port}")
+        self.sub_socket.bind(f"tcp://{LS_IP}:{self.args.learner_port}")
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
     def reset_shared_memory(self):

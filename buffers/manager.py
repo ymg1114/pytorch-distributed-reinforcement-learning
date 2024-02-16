@@ -7,7 +7,7 @@ from collections import deque
 
 from utils.utils import Protocol, encode, decode
 
-local = "127.0.0.1"
+M_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
 
 
 class Manager:
@@ -30,12 +30,12 @@ class Manager:
 
         # worker <-> manager
         self.sub_socket = context.socket(zmq.SUB)  # subscribe rollout-data, stat-data
-        self.sub_socket.bind(f"tcp://{local}:{worker_port}")
+        self.sub_socket.bind(f"tcp://{M_IP}:{worker_port}")
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
         # manager <-> learner-storage
         self.pub_socket = context.socket(zmq.PUB)  # publish batch-data, stat-data
-        self.pub_socket.connect(f"tcp://{local}:{self.args.learner_port}")
+        self.pub_socket.connect(f"tcp://{M_IP}:{self.args.learner_port}")
 
     @staticmethod
     def process_stat(stat_list):

@@ -12,7 +12,7 @@ from torch.optim import Adam
 
 from tensorboardX import SummaryWriter
 
-local = "127.0.0.1"
+L_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
 
 
 def compute_gae(
@@ -74,7 +74,7 @@ class Learner:
         self.batch_queue = queue
 
         self.device = self.args.device
-        self.model = model.to(args.device)
+        self.model = model.to(self.device)
 
         self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
         self.ct = Categorical
@@ -95,7 +95,7 @@ class Learner:
 
         self.pub_socket = context.socket(zmq.PUB)
         self.pub_socket.bind(
-            f"tcp://{local}:{self.args.learner_port+1}"
+            f"tcp://{L_IP}:{self.args.learner_port+1}"
         )  # publish fresh learner-model
 
     def pub_model(self, model_state_dict):
