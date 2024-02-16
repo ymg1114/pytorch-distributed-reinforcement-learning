@@ -131,23 +131,14 @@ class LearnerStorage:
         return
 
     async def shared_memory_chain(self):
-        self.proxy_queue = asyncio.Queue(1024)
         self.rollout_assembler = RolloutAssembler(self.args, asyncio.Queue(1024))
 
         tasks = [
             asyncio.create_task(self.retrieve_data_from_worker()),
             asyncio.create_task(self.build_as_batch()),
-            asyncio.create_task(self.proxy_q_chain()),
             asyncio.create_task(self.put_batch_to_batch_q()),
         ]
         await asyncio.gather(*tasks)
-
-    async def build_as_batch(self):
-        while True:
-            data = await self.rollout_assembler.pop()
-            self.make_batch(data)
-
-            await asyncio.sleep(0.01)
 
     async def retrieve_data_from_worker(self):
         while True:
@@ -169,21 +160,20 @@ class LearnerStorage:
 
             await asyncio.sleep(0.01)
 
-    async def proxy_q_chain(self):
+    async def build_as_batch(self):
         while True:
-            # with self.mutex.lock():
-            if self.is_sh_ready():
-                batch_args = self.get_batch_from_sh_memory()
-                await self.proxy_queue.put(batch_args)
-                self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
+            data = await self.rollout_assembler.pop()
+            self.make_batch(data)
 
             await asyncio.sleep(0.01)
 
     async def put_batch_to_batch_q(self):
         while True:
             # with self.mutex.lock():
-            batch_args = await self.proxy_queue.get()
-            self.batch_queue.put(batch_args)
+            if self.is_sh_ready():
+                batch_args = self.get_batch_from_sh_memory()
+                self.batch_queue.put(batch_args)
+                self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
 
             await asyncio.sleep(0.01)
 
