@@ -3,6 +3,7 @@ import cv2
 import json
 import torch
 import time
+import platform
 import psutil
 import pickle
 import blosc2
@@ -12,6 +13,7 @@ import torchvision.transforms as T
 from enum import Enum, auto
 from pathlib import Path
 
+from signal import SIGTERM  # or SIGKILL
 from types import SimpleNamespace
 
 
@@ -31,6 +33,37 @@ def make_gpu_batch(*args, device):
     to_gpu = lambda tensor: tensor.to(device)
     return tuple(map(to_gpu, args))
 
+
+def get_current_process_id():
+    return os.getpid()
+
+
+def get_process_id(name):
+    for proc in psutil.process_iter(["pid", "name"]):
+        if proc.info["name"] == name:
+            return proc.info["pid"]
+
+
+def kill_process(pid):
+    os.kill(pid, SIGTERM)
+    
+    
+class KillSubProcesses:
+    def __init__(self, processes):
+        self.target_processes = processes
+        self.os_system = platform.system()
+
+    def __call__(self):
+        assert hasattr(self, "target_processes")
+        for p in self.target_processes:
+            if self.os_system == "Windows":
+                print("This is a Windows operating system.")
+                p.terminate()  # Windows에서는 "관리자 권한" 이 필요.
+
+            elif self.os_system == "Linux":
+                print("This is a Linux operating system.")
+                os.kill(p.pid, SIGTERM)    
+    
 
 def mul(shape_dim):
     _val = 1

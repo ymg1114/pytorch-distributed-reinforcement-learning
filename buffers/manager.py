@@ -21,6 +21,10 @@ class Manager:
         self.stat_log_len = 20
         self.zeromq_set(worker_port)
 
+    def __del__(self): # 소멸자
+        self.sub_socket.close()
+        self.pub_socket.close()
+
     def zeromq_set(self, worker_port):
         context = zmq.asyncio.Context()
 
@@ -38,10 +42,11 @@ class Manager:
         mean_stat = {}
         for stat_dict in stat_list:
             for k, v in stat_dict.items():
-                if not k in mean_stat:
-                    mean_stat[k] = [v]
-                else:
-                    mean_stat[k].append(v)
+                if isinstance(v, (int, float, np.number)):
+                    if not k in mean_stat:
+                        mean_stat[k] = [v]
+                    else:
+                        mean_stat[k].append(v)
 
         mean_stat = {k: np.mean(v) for k, v in mean_stat.items()}
         return mean_stat

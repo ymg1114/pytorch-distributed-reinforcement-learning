@@ -38,6 +38,10 @@ class Worker:
 
         self.zeromq_set(port)
 
+    def __del__(self): # 소멸자
+        self.pub_socket.close()
+        self.sub_socket.close()
+
     def zeromq_set(self, port):
         context = zmq.Context()
 

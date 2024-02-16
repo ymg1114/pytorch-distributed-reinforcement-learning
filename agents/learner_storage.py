@@ -26,8 +26,11 @@ class LearnerStorage:
         self.batch_queue = queue
 
         self.zeromq_set()
-        self.init_shared_memory()
+        self.reset_shared_memory()
         self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
+
+    def __del__(self): # 소멸자
+        self.sub_socket.close()
 
     # def __del__(self):
     #     if hasattr(self, "_init") and self._init is True:
@@ -53,7 +56,7 @@ class LearnerStorage:
         self.sub_socket.bind(f"tcp://{local}:{self.args.learner_port}")
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
-    def init_shared_memory(self):
+    def reset_shared_memory(self):
         self.shm_ref = {}
 
         obs_batch = np.zeros(
@@ -113,6 +116,8 @@ class LearnerStorage:
 
     @staticmethod
     def set_shared_memory(self, np_array, name):
+        """멀티프로세싱 환경에서 데이터 복사 없이 공유 메모리를 통해 데이터를 공유함으로써 성능을 개선할 수 있음."""        
+        
         assert name in self.dataframe_keyword
 
         shm_array = mp.Array(

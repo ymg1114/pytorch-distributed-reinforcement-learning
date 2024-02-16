@@ -87,6 +87,9 @@ class Learner:
         self.mean_cal_interval = 30
         self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
 
+    def __del__(self): # 소멸자
+        self.pub_socket.close()
+
     def zeromq_set(self):
         context = zmq.Context()
 
