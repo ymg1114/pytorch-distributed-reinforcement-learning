@@ -38,33 +38,28 @@ def compute_gae(
     return torch.stack(returns, dim=1)
 
 
-def compute_vtrace_targets(rewards, values, bootstrap_value, gamma, lambda_, rho_cap=1.0, c_cap=1.0):
-    """
-    Compute V-trace targets for advantages and values.
-    """
+def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, gamma, rho_bar=1.0, c_bar=1.0):
+    # Importance sampling weights (rho)
+    rho = torch.exp(target_log_probs[:, :-1] - behav_log_probs[:, :-1]).detach() # a/b == exp(log(a)-log(b))
+    rho_clipped = torch.clamp(rho, max=rho_bar)
     
-    num_steps = rewards.shape[1] - 1 # batch, seq, dim
-    advantages = torch.zeros_like(rewards)
-    corrected_values = torch.zeros_like(values)
-    corrected_values[:, -1] = bootstrap_value
+    # truncated importance weights (c)
+    c = torch.exp(target_log_probs[:, :-1] - behav_log_probs[:, :-1]).detach() # a/b == exp(log(a)-log(b))
+    c_clipped = torch.clamp(c, max=c_bar)
+
+    td_target = (
+        rewards[:, :-1]
+        + gamma * (1 - is_fir[:, 1:]) * values[:, 1:]
+    )    
+    deltas = rho_clipped * (td_target - values[:, :-1]) # TD-Error with 보정
+    vs_minus_v_xs = torch.zeros_like(values)
+    for t in reversed(range(deltas.size(1))):
+        vs_minus_v_xs[:, t] = deltas[:, t] + (gamma * (1 - is_fir))[:, t + 1] * c_clipped[:, t] * vs_minus_v_xs[:, t + 1]
     
-    for t in reversed(range(num_steps)):
-        # Importance sampling ratio 계산 (실제 구현에서는 behavior와 target policy 비율을 사용해야 함)
-        rho = min(rho_cap, 1.0)  # 예시에서는 모든 rho를 1로 가정
-        
-        # Truncated importance weight 계산
-        c = min(c_cap, 1.0)  # 예시에서는 모든 c를 1로 가정
-
-        # V-trace corrected TD-error
-        delta = rho * (rewards[:, t] + gamma * corrected_values[:, t + 1] - values[:, t])
-        
-        # V-trace corrected advantage 계산
-        advantages[:, t] = delta + gamma * lambda_ * c * (advantages[:, t + 1] if t + 1 < num_steps else 0)
-
-        # V-trace corrected value 계산
-        corrected_values[:, t] = values[:, t] + advantages[:, t]
-
-    return advantages.detach(), corrected_values.detach()
+    values_target = values + vs_minus_v_xs # vs_minus_v_xs는 V-trace를 통해 수정된 가치 추정치
+    advantages = rho_clipped * (rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * values_target[:, 1:] - values[:, :-1])
+    
+    return advantages.detach(), values_target.detach()
 
 
 class Learner:
@@ -114,107 +109,7 @@ class Learner:
             "original-policy-entropy", detached_losses["policy-entropy"], self.idx
         )
 
-    # PPO
-    def learning(self):
-        self.idx = 0
-
-        while True:
-            batch_args = None
-            with self.mutex.lock():
-                batch_args = self.batch_queue.get()
-
-            if batch_args is not None:
-                # Basically, mini-batch-learning (batch, seq, feat)
-                obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
-                behav_log_probs = (
-                    self.ct(F.softmax(logits, dim=-1))
-                    .log_prob(act.squeeze(-1))
-                    .unsqueeze(-1)
-                )
-
-                # epoch-learning
-                for _ in range(self.args.K_epoch):
-                    lstm_states = (
-                        hx[:, 0],
-                        cx[:, 0],
-                    )  # (batch, seq, hidden) -> (batch, hidden)
-
-                    # on-line model forwarding
-                    log_probs, entropy, value = self.model(
-                        obs,  # (batch, seq, *sha)
-                        lstm_states,  # ((batch, hidden), (batch, hidden))
-                        act,  # (batch, seq, 1)
-                    )
-
-                    td_target = (
-                        rew[:, :-1]
-                        + self.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
-                    )
-                    delta = td_target - value[:, :-1]
-                    delta = delta.cpu().detach()
-
-                    gae = compute_gae(
-                        delta, self.args.gamma, self.args.lmbda
-                    )  # ppo-gae (advantage)
-
-                    ratio = torch.exp(
-                        log_probs[:, :-1] - behav_log_probs[:, :-1]
-                    )  # a/b == log(exp(a)-exp(b))
-                    surr1 = ratio * gae
-                    surr2 = (
-                        torch.clamp(
-                            ratio, 1 - self.args.eps_clip, 1 + self.args.eps_clip
-                        )
-                        * gae
-                    )
-
-                    loss_policy = -torch.min(surr1, surr2).mean()
-                    loss_value = F.smooth_l1_loss(
-                        value[:, :-1], td_target.detach()
-                    ).mean()
-                    policy_entropy = entropy[:, :-1].mean()
-
-                    loss = (
-                        self.args.policy_loss_coef * loss_policy
-                        + self.args.value_loss_coef * loss_value
-                        - self.args.entropy_coef * policy_entropy
-                    )
-
-                    detached_losses = {
-                        "policy-loss": loss_policy.detach().cpu(),
-                        "value-loss": loss_value.detach().cpu(),
-                        "policy-entropy": policy_entropy.detach().cpu(),
-                    }
-
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.args.max_grad_norm
-                    )
-                    print(
-                        "loss {:.5f} original_value_loss {:.5f} original_policy_loss {:.5f} original_policy_entropy {:.5f}".format(
-                            loss.item(),
-                            detached_losses["value-loss"],
-                            detached_losses["policy-loss"],
-                            detached_losses["policy-entropy"],
-                        )
-                    )
-                    self.optimizer.step()
-
-                self.pub_model(self.model.state_dict())
-
-                # if (self.idx % self.args.loss_log_interval == 0):
-                #     self.log_loss_tensorboard(loss, detached_losses)
-
-                if self.idx % self.args.model_save_interval == 0:
-                    torch.save(
-                        self.model,
-                        os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
-                    )
-
-                self.idx += 1
-                
-    # # IMPALA
+    # # PPO
     # def learning(self):
     #     self.idx = 0
 
@@ -246,17 +141,32 @@ class Learner:
     #                     act,  # (batch, seq, 1)
     #                 )
 
-    #                 # V-trace를 사용하여 off-policy corrections 연산
-    #                 advantages, corrected_values = compute_vtrace_targets(
-    #                     rewards=rew,
-    #                     values=value,
-    #                     bootstrap_value=value[:, -1],
-    #                     gamma=self.args.gamma,
-    #                     lambda_=self.args.lmbda,
+    #                 td_target = (
+    #                     rew[:, :-1]
+    #                     + self.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
+    #                 )
+    #                 delta = td_target - value[:, :-1]
+    #                 delta = delta.cpu().detach()
+
+    #                 gae = compute_gae(
+    #                     delta, self.args.gamma, self.args.lmbda
+    #                 )  # ppo-gae (advantage)
+
+    #                 ratio = torch.exp(
+    #                     log_probs[:, :-1] - behav_log_probs[:, :-1]
+    #                 )  # a/b == exp(log(a)-log(b))
+    #                 surr1 = ratio * gae
+    #                 surr2 = (
+    #                     torch.clamp(
+    #                         ratio, 1 - self.args.eps_clip, 1 + self.args.eps_clip
     #                     )
-                    
-    #                 loss_policy = -torch.mean(log_probs[:, :-1] * advantages[:, :-1]).mean()
-    #                 loss_value = F.smooth_l1_loss(value[:, :-1], corrected_values[:, :-1]).mean()
+    #                     * gae
+    #                 )
+
+    #                 loss_policy = -torch.min(surr1, surr2).mean()
+    #                 loss_value = F.smooth_l1_loss(
+    #                     value[:, :-1], td_target.detach()
+    #                 ).mean()
     #                 policy_entropy = entropy[:, :-1].mean()
 
     #                 loss = (
@@ -297,4 +207,90 @@ class Learner:
     #                     os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
     #                 )
 
-    #             self.idx += 1                
+    #             self.idx += 1
+                
+    # IMPALA
+    def learning(self):
+        self.idx = 0
+
+        while True:
+            batch_args = None
+            with self.mutex.lock():
+                batch_args = self.batch_queue.get()
+
+            if batch_args is not None:
+                # Basically, mini-batch-learning (batch, seq, feat)
+                obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
+                behav_log_probs = (
+                    self.ct(F.softmax(logits, dim=-1))
+                    .log_prob(act.squeeze(-1))
+                    .unsqueeze(-1)
+                )
+
+                # epoch-learning
+                for _ in range(self.args.K_epoch):
+                    lstm_states = (
+                        hx[:, 0],
+                        cx[:, 0],
+                    )  # (batch, seq, hidden) -> (batch, hidden)
+
+                    # on-line model forwarding
+                    log_probs, entropy, value = self.model(
+                        obs,  # (batch, seq, *sha)
+                        lstm_states,  # ((batch, hidden), (batch, hidden))
+                        act,  # (batch, seq, 1)
+                    )
+                    
+                    # V-trace를 사용하여 off-policy corrections 연산
+                    advantages, values_target = compute_v_trace(
+                        behav_log_probs=behav_log_probs, 
+                        target_log_probs=log_probs,
+                        is_fir=is_fir,
+                        rewards=rew,
+                        values=value, 
+                        gamma=self.args.gamma,
+                        )
+                    
+                    loss_policy = -(log_probs[:, :-1] * advantages).mean()
+                    loss_value = F.smooth_l1_loss(value[:, :-1], values_target[:, :-1]).mean()
+                    policy_entropy = entropy[:, :-1].mean()
+
+                    loss = (
+                        self.args.policy_loss_coef * loss_policy
+                        + self.args.value_loss_coef * loss_value
+                        - self.args.entropy_coef * policy_entropy
+                    )
+
+                    detached_losses = {
+                        "policy-loss": loss_policy.detach().cpu(),
+                        "value-loss": loss_value.detach().cpu(),
+                        "policy-entropy": policy_entropy.detach().cpu(),
+                    }
+
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.args.max_grad_norm
+                    )
+                    print(
+                        "loss {:.5f} original_value_loss {:.5f} original_policy_loss {:.5f} original_policy_entropy {:.5f}".format(
+                            loss.item(),
+                            detached_losses["value-loss"],
+                            detached_losses["policy-loss"],
+                            detached_losses["policy-entropy"],
+                        )
+                    )
+                    self.optimizer.step()
+
+                self.pub_model(self.model.state_dict())
+
+                # if (self.idx % self.args.loss_log_interval == 0):
+                #     self.log_loss_tensorboard(loss, detached_losses)
+
+                if self.idx % self.args.model_save_interval == 0:
+                    torch.save(
+                        self.model,
+                        os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
+                    )
+
+                self.idx += 1                
