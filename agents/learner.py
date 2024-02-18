@@ -68,7 +68,7 @@ class Learner:
         self.model = model.to(self.device)
 
         self.optimizer = Adam(self.model.parameters(), lr=self.args.lr)
-        self.ct = Categorical
+        self.CT = Categorical
 
         self.to_gpu = partial(make_gpu_batch, device=self.device)
 
@@ -117,7 +117,7 @@ class Learner:
     #             # Basically, mini-batch-learning (batch, seq, feat)
     #             obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
     #             behav_log_probs = (
-    #                 self.ct(F.softmax(logits, dim=-1))
+    #                 self.CT(F.softmax(logits, dim=-1))
     #                 .log_prob(act.squeeze(-1))
     #                 .unsqueeze(-1)
     #             )
@@ -217,7 +217,7 @@ class Learner:
                 # Basically, mini-batch-learning (batch, seq, feat)
                 obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
                 behav_log_probs = (
-                    self.ct(F.softmax(logits, dim=-1))
+                    self.CT(F.softmax(logits, dim=-1))
                     .log_prob(act.squeeze(-1))
                     .unsqueeze(-1)
                 )
