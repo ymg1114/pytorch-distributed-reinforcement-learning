@@ -52,7 +52,7 @@ class Worker:
         )  # subscribe model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
-    def pub_rollout2(self, **step_data):
+    def pub_rollout(self, **step_data):
         self.pub_socket.send_multipart([*encode(Protocol.Rollout, step_data)])
         # print(f"worker_name: {self.worker_name} pub rollout to manager!")
 
@@ -112,7 +112,7 @@ class Worker:
                     "id": _id,
                 }
 
-                self.pub_rollout2(**step_data)
+                self.pub_rollout(**step_data)
 
                 is_fir = False
                 obs = next_obs

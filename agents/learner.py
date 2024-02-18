@@ -7,6 +7,9 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 from functools import partial
 
+import multiprocessing as mp
+import queue
+
 from utils.utils import Protocol, encode, make_gpu_batch, writer, L_IP
 from torch.optim import Adam
 
@@ -59,10 +62,11 @@ def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, 
 
 
 class Learner:
-    def __init__(self, args, mutex, model, queue):
+    def __init__(self, args, mutex, model, queue, stat_queue=None):
         self.args = args
         self.mutex = mutex
         self.batch_queue = queue
+        self.stat_queue = stat_queue
 
         self.device = self.args.device
         self.model = model.to(self.device)
@@ -89,9 +93,9 @@ class Learner:
             f"tcp://{L_IP}:{self.args.learner_port+1}"
         )  # publish fresh learner-model
 
-    def pub_model(self, model_state_dict):
+    def pub_model(self, model_state_dict): # learner -> worker
         self.pub_socket.send_multipart([*encode(Protocol.Model, model_state_dict)])
-
+            
     def log_loss_tensorboard(self, loss, detached_losses):
         self.writer.add_scalar("total-loss", float(loss.item()), self.idx)
         self.writer.add_scalar(
@@ -103,6 +107,17 @@ class Learner:
         self.writer.add_scalar(
             "original-policy-entropy", detached_losses["policy-entropy"], self.idx
         )
+
+        if self.stat_queue is not None and isinstance(self.stat_queue, mp.queues.Queue):
+            try:
+                stat_dict = self.stat_queue.get_nowait()
+                assert "tag" in stat_dict
+                assert "x" in stat_dict
+                assert "y" in stat_dict
+                self.writer.add_scalar(stat_dict["tag"], stat_dict["y"], stat_dict["x"])
+            except queue.Empty:
+                # 큐가 비어있음을 처리
+                print("stat_queue is empty.")
 
     # # PPO
     # def learning(self):
@@ -195,7 +210,7 @@ class Learner:
 
     #             if (self.idx % self.args.loss_log_interval == 0):
     #                 self.log_loss_tensorboard(loss, detached_losses)
-
+                    
     #             if self.idx % self.args.model_save_interval == 0:
     #                 torch.save(
     #                     self.model,
@@ -281,7 +296,7 @@ class Learner:
 
                 if (self.idx % self.args.loss_log_interval == 0):
                     self.log_loss_tensorboard(loss, detached_losses)
-
+                    
                 if self.idx % self.args.model_save_interval == 0:
                     torch.save(
                         self.model,

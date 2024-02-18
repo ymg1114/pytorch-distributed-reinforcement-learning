@@ -90,13 +90,13 @@ def worker_run(args, model, worker_name, port, *obs_shape):
     worker.collect_rolloutdata()  # collect rollout
     
     
-def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape):
-    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape)
+def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape, stat_queue=None):
+    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape, stat_queue)
     asyncio.run(storage.shared_memory_chain())
 
 
-def run_learner(args, mutex, learner_model, queue):
-    learner = Learner(args, mutex, learner_model, queue)
+def run_learner(args, mutex, learner_model, queue, stat_queue=None):
+    learner = Learner(args, mutex, learner_model, queue, stat_queue)
     learner.learning()    
 
 
@@ -150,10 +150,13 @@ def worker_sub_process():
 def learner_sub_process():
     try:
         queue = mp.Queue(1024)
+        stat_queue = mp.Queue(64) # 좋은 구조는 아님.
+        
         learner_process = []
         s = Process(
             target=storage_run,
             args=(args, mutex, DataFrameKeyword, queue, *obs_shape),
+            kwargs={"stat_queue": stat_queue},
             daemon=True,
         )  # child-processes
         learner_process.append(s)
@@ -161,6 +164,7 @@ def learner_sub_process():
         l = Process(
             target=run_learner,
             args=(args, mutex, learner_model, queue),
+            kwargs={"stat_queue": stat_queue},
             daemon=True,
         )  # child-processes
         learner_process.append(l)

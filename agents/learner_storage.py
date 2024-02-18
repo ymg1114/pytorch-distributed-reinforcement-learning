@@ -10,7 +10,7 @@ from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, write
 
 
 class LearnerStorage:
-    def __init__(self, args, mutex, dataframe_keyword, queue, obs_shape):
+    def __init__(self, args, mutex, dataframe_keyword, queue, obs_shape, stat_queue=None):
         self.args = args
         self.dataframe_keyword = dataframe_keyword
         self.obs_shape = obs_shape
@@ -21,10 +21,11 @@ class LearnerStorage:
         self._init = False
 
         self.batch_queue = queue
+        self.stat_queue = stat_queue
 
         self.zeromq_set()
         self.reset_shared_memory()
-        self.writer = writer
+        # self.writer = writer
 
     def __del__(self): # 소멸자
         self.sub_socket.close()
@@ -195,7 +196,17 @@ class LearnerStorage:
             tag = f"worker/{len}-game-mean-stat-of-{k}"
             x = self.log_stat_tensorboard.calls * len  # global game counts
             y = v
-            self.writer.add_scalar(tag, y, x)
+            # self.writer.add_scalar(tag, y, x)
+            
+            stat_dict = {}
+            stat_dict.update(
+                {
+                    "tag": tag, 
+                    "x": x, # global game counts
+                    "y": y,
+                }
+            )                
+            self.stat_queue.put(stat_dict)
             print(f"tag: {tag}, y: {y}, x: {x}")
 
     def make_batch(self, rollout):
