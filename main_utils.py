@@ -16,7 +16,7 @@ from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
-from utils.utils import KillProcesses, SaveErrorLog, Params, result_dir, model_dir
+from utils.utils import KillProcesses, SaveErrorLog, Params, WriterClass
 from utils.lock import Mutex
 
 
@@ -47,10 +47,9 @@ args = Params
 args.device = torch.device(
     f"cuda:{Params.gpu_idx}" if torch.cuda.is_available() else "cpu"
 )
-args.result_dir = result_dir
-args.model_dir = model_dir
+args.result_dir = WriterClass.result_dir
+args.model_dir = WriterClass.model_dir
 print(f"device: {args.device}")
-
 
 model_dir = Path(args.model_dir)
 # 경로가 디렉토리인지 확인
@@ -97,8 +96,12 @@ def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape, stat_queue=No
 
 def run_learner(args, mutex, learner_model, queue, stat_queue=None):
     learner = Learner(args, mutex, learner_model, queue, stat_queue)
-    learner.learning()    
-
+    learning_switcher = {
+        "PPO": learner.learning_ppo,
+        "IMPALA": learner.learning_impala,
+    }
+    learning = learning_switcher.get(args.algo, lambda: AssertionError("Should be PPO or IMPALA"))
+    learning()
 
 @register
 def manager_sub_process():    

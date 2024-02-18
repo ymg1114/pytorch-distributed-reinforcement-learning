@@ -10,7 +10,7 @@ from functools import partial
 import multiprocessing as mp
 import queue
 
-from utils.utils import Protocol, encode, make_gpu_batch, writer, L_IP
+from utils.utils import Protocol, encode, make_gpu_batch, WriterClass, L_IP
 from torch.optim import Adam
 
 
@@ -37,7 +37,7 @@ def compute_gae(
     return torch.stack(returns, dim=1)
 
 
-def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, gamma, rho_bar=1.0, c_bar=1.0):
+def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, gamma, rho_bar=0.8, c_bar=1.0):
     # Importance sampling weights (rho)
     rho = torch.exp(target_log_probs[:, :-1] - behav_log_probs[:, :-1]).detach() # a/b == exp(log(a)-log(b))
     rho_clipped = torch.clamp(rho, max=rho_bar)
@@ -80,7 +80,7 @@ class Learner:
         self.stat_log_len = 20
         self.zeromq_set()
         self.mean_cal_interval = 30
-        self.writer = writer
+        self.writer = WriterClass.wr
         
     def __del__(self): # 소멸자
         self.pub_socket.close()
@@ -119,108 +119,108 @@ class Learner:
                 # 큐가 비어있음을 처리
                 print("stat_queue is empty.")
 
-    # # PPO
-    # def learning(self):
-    #     self.idx = 0
+    # PPO
+    def learning_ppo(self):
+        self.idx = 0
 
-    #     while True:
-    #         batch_args = None
-    #         with self.mutex.lock():
-    #             batch_args = self.batch_queue.get()
+        while True:
+            batch_args = None
+            with self.mutex.lock():
+                batch_args = self.batch_queue.get()
 
-    #         if batch_args is not None:
-    #             # Basically, mini-batch-learning (batch, seq, feat)
-    #             obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
-    #             behav_log_probs = (
-    #                 self.CT(F.softmax(logits, dim=-1))
-    #                 .log_prob(act.squeeze(-1))
-    #                 .unsqueeze(-1)
-    #             )
+            if batch_args is not None:
+                # Basically, mini-batch-learning (batch, seq, feat)
+                obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
+                behav_log_probs = (
+                    self.CT(F.softmax(logits, dim=-1))
+                    .log_prob(act.squeeze(-1))
+                    .unsqueeze(-1)
+                )
 
-    #             # epoch-learning
-    #             for _ in range(self.args.K_epoch):
-    #                 lstm_states = (
-    #                     hx[:, 0],
-    #                     cx[:, 0],
-    #                 )  # (batch, seq, hidden) -> (batch, hidden)
+                # epoch-learning
+                for _ in range(self.args.K_epoch):
+                    lstm_states = (
+                        hx[:, 0],
+                        cx[:, 0],
+                    )  # (batch, seq, hidden) -> (batch, hidden)
 
-    #                 # on-line model forwarding
-    #                 log_probs, entropy, value = self.model(
-    #                     obs,  # (batch, seq, *sha)
-    #                     lstm_states,  # ((batch, hidden), (batch, hidden))
-    #                     act,  # (batch, seq, 1)
-    #                 )
+                    # on-line model forwarding
+                    log_probs, entropy, value = self.model(
+                        obs,  # (batch, seq, *sha)
+                        lstm_states,  # ((batch, hidden), (batch, hidden))
+                        act,  # (batch, seq, 1)
+                    )
 
-    #                 td_target = (
-    #                     rew[:, :-1]
-    #                     + self.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
-    #                 )
-    #                 delta = td_target - value[:, :-1]
-    #                 delta = delta.cpu().detach()
+                    td_target = (
+                        rew[:, :-1]
+                        + self.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
+                    )
+                    delta = td_target - value[:, :-1]
+                    delta = delta.cpu().detach()
 
-    #                 gae = compute_gae(
-    #                     delta, self.args.gamma, self.args.lmbda
-    #                 )  # ppo-gae (advantage)
+                    gae = compute_gae(
+                        delta, self.args.gamma, self.args.lmbda
+                    )  # ppo-gae (advantage)
 
-    #                 ratio = torch.exp(
-    #                     log_probs[:, :-1] - behav_log_probs[:, :-1]
-    #                 )  # a/b == exp(log(a)-log(b))
-    #                 surr1 = ratio * gae
-    #                 surr2 = (
-    #                     torch.clamp(
-    #                         ratio, 1 - self.args.eps_clip, 1 + self.args.eps_clip
-    #                     )
-    #                     * gae
-    #                 )
+                    ratio = torch.exp(
+                        log_probs[:, :-1] - behav_log_probs[:, :-1]
+                    )  # a/b == exp(log(a)-log(b))
+                    surr1 = ratio * gae
+                    surr2 = (
+                        torch.clamp(
+                            ratio, 1 - self.args.eps_clip, 1 + self.args.eps_clip
+                        )
+                        * gae
+                    )
 
-    #                 loss_policy = -torch.min(surr1, surr2).mean()
-    #                 loss_value = F.smooth_l1_loss(
-    #                     value[:, :-1], td_target.detach()
-    #                 ).mean()
-    #                 policy_entropy = entropy[:, :-1].mean()
+                    loss_policy = -torch.min(surr1, surr2).mean()
+                    loss_value = F.smooth_l1_loss(
+                        value[:, :-1], td_target.detach()
+                    ).mean()
+                    policy_entropy = entropy[:, :-1].mean()
 
-    #                 loss = (
-    #                     self.args.policy_loss_coef * loss_policy
-    #                     + self.args.value_loss_coef * loss_value
-    #                     - self.args.entropy_coef * policy_entropy
-    #                 )
+                    loss = (
+                        self.args.policy_loss_coef * loss_policy
+                        + self.args.value_loss_coef * loss_value
+                        - self.args.entropy_coef * policy_entropy
+                    )
 
-    #                 detached_losses = {
-    #                     "policy-loss": loss_policy.detach().cpu(),
-    #                     "value-loss": loss_value.detach().cpu(),
-    #                     "policy-entropy": policy_entropy.detach().cpu(),
-    #                 }
+                    detached_losses = {
+                        "policy-loss": loss_policy.detach().cpu(),
+                        "value-loss": loss_value.detach().cpu(),
+                        "policy-entropy": policy_entropy.detach().cpu(),
+                    }
 
-    #                 self.optimizer.zero_grad()
-    #                 loss.backward()
-    #                 torch.nn.utils.clip_grad_norm_(
-    #                     self.model.parameters(), self.args.max_grad_norm
-    #                 )
-    #                 print(
-    #                     "loss {:.5f} original_value_loss {:.5f} original_policy_loss {:.5f} original_policy_entropy {:.5f}".format(
-    #                         loss.item(),
-    #                         detached_losses["value-loss"],
-    #                         detached_losses["policy-loss"],
-    #                         detached_losses["policy-entropy"],
-    #                     )
-    #                 )
-    #                 self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.args.max_grad_norm
+                    )
+                    print(
+                        "loss {:.5f} original_value_loss {:.5f} original_policy_loss {:.5f} original_policy_entropy {:.5f}".format(
+                            loss.item(),
+                            detached_losses["value-loss"],
+                            detached_losses["policy-loss"],
+                            detached_losses["policy-entropy"],
+                        )
+                    )
+                    self.optimizer.step()
 
-    #             self.pub_model(self.model.state_dict())
+                self.pub_model(self.model.state_dict())
 
-    #             if (self.idx % self.args.loss_log_interval == 0):
-    #                 self.log_loss_tensorboard(loss, detached_losses)
+                if (self.idx % self.args.loss_log_interval == 0):
+                    self.log_loss_tensorboard(loss, detached_losses)
                     
-    #             if self.idx % self.args.model_save_interval == 0:
-    #                 torch.save(
-    #                     self.model,
-    #                     os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
-    #                 )
+                if self.idx % self.args.model_save_interval == 0:
+                    torch.save(
+                        self.model,
+                        os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
+                    )
 
-    #             self.idx += 1
+                self.idx += 1
                 
     # IMPALA
-    def learning(self):
+    def learning_impala(self):
         self.idx = 0
 
         while True:

@@ -15,7 +15,7 @@ from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
-from utils.utils import KillProcesses, SaveErrorLog, Params, result_dir, model_dir
+from utils.utils import KillProcesses, SaveErrorLog, Params, WriterClass
 from utils.lock import Mutex
 
 
@@ -45,15 +45,20 @@ def manager_run(args, *obs_shape):
     asyncio.run(manager.data_chain())
 
 
-def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape):
-    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape)
+def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape, stat_queue=None):
+    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape, stat_queue)
     asyncio.run(storage.shared_memory_chain())
 
 
-def run(args, mutex, learner_model, child_procs, queue):
+def run(args, mutex, learner_model, child_procs, queue, stat_queue=None):
     [p.start() for p in child_procs]
-    learner = Learner(args, mutex, learner_model, queue)
-    learner.learning()
+    learner = Learner(args, mutex, learner_model, queue, stat_queue)
+    learning_switcher = {
+        "PPO": learner.learning_ppo,
+        "IMPALA": learner.learning_impala,
+    }
+    learning = learning_switcher.get(args.algo, lambda: AssertionError("Should be PPO or IMPALA"))
+    learning()
     # [p.join() for p in child_procs]
 
 
@@ -61,17 +66,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     p = Params
     parser.add_argument("--env", type=str, default=p.env)
+    parser.add_argument("--algo", type=str, default=p.algo)
     
     parser.add_argument("--need-conv", type=bool, default=p.need_conv)
-    parser.add_argument("--width", type=int, default=p.w)
-    parser.add_argument("--height", type=int, default=p.h)
-    parser.add_argument("--is-gray", type=bool, default=p.gray)
+    parser.add_argument("--width", type=int, default=p.width)
+    parser.add_argument("--height", type=int, default=p.height)
+    parser.add_argument("--is-gray", type=bool, default=p.is_gray)
     parser.add_argument("--hidden-size", type=int, default=p.hidden_size)
 
     parser.add_argument("--K-epoch", type=float, default=p.K_epoch)
-    parser.add_argument("--lr", type=float, default=p.learning_rate)
+    parser.add_argument("--lr", type=float, default=p.lr)
 
-    parser.add_argument("--seq-len", type=int, default=p.unroll_length)
+    parser.add_argument("--seq-len", type=int, default=p.seq_len)
 
     parser.add_argument("--batch-size", type=int, default=p.batch_size)
     parser.add_argument("--gamma", type=float, default=p.gamma)
@@ -84,8 +90,8 @@ if __name__ == "__main__":
     parser.add_argument("--value-loss-coef", type=float, default=p.value_loss_coef)
     parser.add_argument("--entropy-coef", type=float, default=p.entropy_coef)
 
-    parser.add_argument("--max-grad-norm", type=float, default=p.clip_gradient_norm)
-    parser.add_argument("--loss-log-interval", type=int, default=p.log_save_interval)
+    parser.add_argument("--max-grad-norm", type=float, default=p.max_grad_norm)
+    parser.add_argument("--loss-log-interval", type=int, default=p.loss_log_interval)
     parser.add_argument(
         "--model-save-interval", type=int, default=p.model_save_interval
     )
@@ -100,8 +106,8 @@ if __name__ == "__main__":
     args.device = torch.device(
         f"cuda:{p.gpu_idx}" if torch.cuda.is_available() else "cpu"
     )
-    args.result_dir = result_dir
-    args.model_dir = model_dir
+    args.result_dir = WriterClass.result_dir
+    args.model_dir = WriterClass.model_dir
         
     print(f"device: {args.device}")
 
@@ -152,14 +158,16 @@ if __name__ == "__main__":
             child_procs.append(w)
 
         queue = mp.Queue(1024)
+        stat_queue = mp.Queue(64) # 좋은 구조는 아님.
         s = Process(
             target=storage_run,
             args=(args, mutex, DataFrameKeyword, queue, *obs_shape),
+            kwargs={"stat_queue": stat_queue},
             daemon=True,
         )  # child-processes
         child_procs.append(s)
 
-        run(args, mutex, learner_model, child_procs, queue)  # main-process
+        run(args, mutex, learner_model, child_procs, queue, stat_queue=stat_queue)  # main-process
 
     except:
         log_dir = os.path.join(os.getcwd(), "logs")

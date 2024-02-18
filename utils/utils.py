@@ -23,11 +23,21 @@ with open(utils) as f:
     _p = json.load(f)
     Params = SimpleNamespace(**_p)
 
-dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
-result_dir = os.path.join("results", str(dt_string))
-model_dir = os.path.join(result_dir, "models")
 
-writer = SummaryWriter(log_dir=result_dir)  # tensorboard-log
+class MetaclassSingleton(type):
+    _instance = {}
+    def __call__(cls,*args,**kwargs):
+        if cls not in cls._instance:
+            cls._instance[cls] = super(MetaclassSingleton, cls).__call__(*args,*kwargs)
+        return cls._instance[cls]
+
+
+class WriterClass(metaclass=MetaclassSingleton):
+    dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
+    result_dir = os.path.join("results", str(dt_string))
+    model_dir = os.path.join(result_dir, "models")
+
+    wr = SummaryWriter(log_dir=result_dir)  # tensorboard-log
 
 
 LS_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.

@@ -6,7 +6,7 @@ import numpy as np
 import multiprocessing as mp
 
 from buffers.rollout_assembler import RolloutAssembler
-from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, writer, LS_IP
+from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, WriterClass, LS_IP
 
 
 class LearnerStorage:
@@ -25,7 +25,7 @@ class LearnerStorage:
 
         self.zeromq_set()
         self.reset_shared_memory()
-        # self.writer = writer
+        # self.writer = WriterClass.wr
 
     def __del__(self): # 소멸자
         self.sub_socket.close()
@@ -196,8 +196,7 @@ class LearnerStorage:
             tag = f"worker/{len}-game-mean-stat-of-{k}"
             x = self.log_stat_tensorboard.calls * len  # global game counts
             y = v
-            # self.writer.add_scalar(tag, y, x)
-            
+
             stat_dict = {}
             stat_dict.update(
                 {
@@ -205,8 +204,11 @@ class LearnerStorage:
                     "x": x, # global game counts
                     "y": y,
                 }
-            )                
-            self.stat_queue.put(stat_dict)
+            )
+            if self.stat_queue is not None and isinstance(self.stat_queue, mp.queues.Queue):         
+                self.stat_queue.put(stat_dict)
+            # else:
+            #     self.writer.add_scalar(tag, y, x) # 좋은 구조는 아님
             print(f"tag: {tag}, y: {y}, x: {x}")
 
     def make_batch(self, rollout):

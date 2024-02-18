@@ -1,5 +1,6 @@
 {
     "env": "CartPole-v1",
+    "algo": "PPO",
     "need_conv": false,
     "height": 84,
     "width": 84,
