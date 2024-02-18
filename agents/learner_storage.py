@@ -6,10 +6,7 @@ import numpy as np
 import multiprocessing as mp
 
 from buffers.rollout_assembler import RolloutAssembler
-from utils.utils import Protocol, mul, decode, flatten, to_torch, counted
-from tensorboardX import SummaryWriter
-
-LS_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
+from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, writer, LS_IP
 
 
 class LearnerStorage:
@@ -27,7 +24,7 @@ class LearnerStorage:
 
         self.zeromq_set()
         self.reset_shared_memory()
-        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
+        self.writer = writer
 
     def __del__(self): # 소멸자
         self.sub_socket.close()

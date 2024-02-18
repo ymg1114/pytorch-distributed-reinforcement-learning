@@ -15,7 +15,7 @@ from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
-from utils.utils import KillProcesses, SaveErrorLog, Params
+from utils.utils import KillProcesses, SaveErrorLog, Params, result_dir, model_dir
 from utils.lock import Mutex
 
 
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     p = Params
     parser.add_argument("--env", type=str, default=p.env)
-
+    
     parser.add_argument("--need-conv", type=bool, default=p.need_conv)
     parser.add_argument("--width", type=int, default=p.w)
     parser.add_argument("--height", type=int, default=p.h)
@@ -100,15 +100,14 @@ if __name__ == "__main__":
     args.device = torch.device(
         f"cuda:{p.gpu_idx}" if torch.cuda.is_available() else "cpu"
     )
+    args.result_dir = result_dir
+    args.model_dir = model_dir
+        
     print(f"device: {args.device}")
 
     try:
         # set_start_method("spawn")
         # print("spawn init method run")
-
-        dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
-        args.result_dir = os.path.join("results", str(dt_string))
-        args.model_dir = os.path.join(args.result_dir, "models")
 
         if not os.path.isdir(args.model_dir):
             os.makedirs(args.model_dir)

@@ -5,9 +5,7 @@ import asyncio
 import numpy as np
 from collections import deque
 
-from utils.utils import Protocol, encode, decode
-
-M_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
+from utils.utils import Protocol, encode, decode, M_IP
 
 
 class Manager:

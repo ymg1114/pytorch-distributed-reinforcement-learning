@@ -7,10 +7,7 @@ import gym
 import torch
 import numpy as np
 
-from utils.utils import Protocol, encode, decode
-from utils.utils import obs_preprocess
-
-W_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
+from utils.utils import Protocol, encode, decode, obs_preprocess, W_IP
 
 
 class Env:

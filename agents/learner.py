@@ -7,12 +7,8 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 from functools import partial
 
-from utils.utils import Protocol, encode, make_gpu_batch
+from utils.utils import Protocol, encode, make_gpu_batch, writer, L_IP
 from torch.optim import Adam
-
-from tensorboardX import SummaryWriter
-
-L_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
 
 
 def compute_gae(
@@ -80,8 +76,8 @@ class Learner:
         self.stat_log_len = 20
         self.zeromq_set()
         self.mean_cal_interval = 30
-        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
-
+        self.writer = writer
+        
     def __del__(self): # 소멸자
         self.pub_socket.close()
 
@@ -96,7 +92,6 @@ class Learner:
     def pub_model(self, model_state_dict):
         self.pub_socket.send_multipart([*encode(Protocol.Model, model_state_dict)])
 
-    # TODO: 현재 작동하지 않아 주석 상태. 개선 필요.
     def log_loss_tensorboard(self, loss, detached_losses):
         self.writer.add_scalar("total-loss", float(loss.item()), self.idx)
         self.writer.add_scalar(
@@ -198,8 +193,8 @@ class Learner:
 
     #             self.pub_model(self.model.state_dict())
 
-    #             # if (self.idx % self.args.loss_log_interval == 0):
-    #             #     self.log_loss_tensorboard(loss, detached_losses)
+    #             if (self.idx % self.args.loss_log_interval == 0):
+    #                 self.log_loss_tensorboard(loss, detached_losses)
 
     #             if self.idx % self.args.model_save_interval == 0:
     #                 torch.save(
@@ -284,8 +279,8 @@ class Learner:
 
                 self.pub_model(self.model.state_dict())
 
-                # if (self.idx % self.args.loss_log_interval == 0):
-                #     self.log_loss_tensorboard(loss, detached_losses)
+                if (self.idx % self.args.loss_log_interval == 0):
+                    self.log_loss_tensorboard(loss, detached_losses)
 
                 if self.idx % self.args.model_save_interval == 0:
                     torch.save(
