@@ -14,7 +14,7 @@ from utils.utils import Protocol, encode, make_gpu_batch, WriterClass, L_IP, Exe
 from torch.optim import Adam, RMSprop
 
 
-timer = ExecutionTimer(num_transition=Params.seq_len*Params.batch_size) # Learner에서 데이터 처리량 (학습)
+timer = ExecutionTimer(num_transition=Params.seq_len*Params.batch_size*1) # Learner에서 데이터 처리량 (학습)
 
 
 def compute_gae(
@@ -141,7 +141,7 @@ class Learner:
         if timer is not None and isinstance(timer, ExecutionTimer):
             for k, v in timer.timer_dict.items():
                 self.writer.add_scalar(
-                    f"{k}-mean-sec", sum(v) / (len(v) + 1e-6), self.idx
+                    f"{k}-elapsed-mean-sec", sum(v) / (len(v) + 1e-6), self.idx
                 )
             for k, v in timer.throughput_dict.items():
                 self.writer.add_scalar(
