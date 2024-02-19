@@ -9,7 +9,7 @@ from buffers.rollout_assembler import RolloutAssembler
 from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, WriterClass, LS_IP, ExecutionTimer, Params
 
 
-timer = ExecutionTimer(num_transition=1) # LearnerStorage에서 데이터 처리량 (수신)
+timer = ExecutionTimer(num_transition=Params.seq_len*1) # LearnerStorage에서 데이터 처리량 (수신) / 부정확한 값이지만 어쩔 수 없음
 
 
 class LearnerStorage:
@@ -146,8 +146,7 @@ class LearnerStorage:
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Rollout:
                 # with self.mutex.lock():
-                with timer.timer("learner-storage-throughput", check_throughput=True):
-                    await self.rollout_assembler.push(data)
+                await self.rollout_assembler.push(data)
 
             elif protocol is Protocol.Stat:
                 self.stat_list.append(data["mean_stat"])
@@ -164,8 +163,9 @@ class LearnerStorage:
 
     async def build_as_batch(self):
         while True:
-            data = await self.rollout_assembler.pop()
-            self.make_batch(data)
+            with timer.timer("learner-storage-throughput", check_throughput=True):
+                data = await self.rollout_assembler.pop()
+                self.make_batch(data)
 
             await asyncio.sleep(0.01)
 
@@ -194,36 +194,35 @@ class LearnerStorage:
     @counted
     def log_stat_tensorboard(self, data):
         _len = data["log_len"]
-        data_dict = data["mean_stat"]
+        _data_dict = data["mean_stat"]
 
-        stat_dict = {}
-        for k, v in data_dict.items():
+        for k, v in _data_dict.items():
             tag = f"worker/{_len}-game-mean-stat-of-{k}"
             x = self.log_stat_tensorboard.calls * _len  # global game counts
             y = v
 
-            stat_dict.update(
-                {
-                    "tag": tag, 
-                    "x": x, # global game counts
-                    "y": y,
+            stat_dict = {
+                "tag": tag, 
+                "x": x, # global game counts
+                "y": y,
                 }
-            )
 
             print(f"tag: {tag}, y: {y}, x: {x}")
-
+            
+            #TODO: 좋은 구조는 아님
+            if self.stat_queue is not None and isinstance(self.stat_queue, mp.queues.Queue):         
+                self.stat_queue.put(stat_dict)
+                
         for k, v in timer.throughput_dict.items():
-            stat_dict.update(
-                {
-                    "tag": f"{k}-transition-per-secs", 
-                    "x": x, # global game counts / x축 비교가 애매할 수 있음
-                    "y": sum(v) / (len(v) + 1e-6),
+            stat_dict = {
+                "tag": f"{k}-transition-per-secs", 
+                "x": x, # global game counts / x축 비교가 애매할 수 있음
+                "y": sum(v) / (len(v) + 1e-6),
                 }
-            )
 
-        #TODO: 좋은 구조는 아님
-        if self.stat_queue is not None and isinstance(self.stat_queue, mp.queues.Queue):         
-            self.stat_queue.put(stat_dict)
+            #TODO: 좋은 구조는 아님
+            if self.stat_queue is not None and isinstance(self.stat_queue, mp.queues.Queue):         
+                self.stat_queue.put(stat_dict)
 
     def make_batch(self, rollout):
         sq = self.args.seq_len
