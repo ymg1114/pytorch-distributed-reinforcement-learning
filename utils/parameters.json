@@ -5,7 +5,7 @@
     "height": 84,
     "width": 84,
     "is_gray": false,
-    "hidden_size": 32,
+    "hidden_size": 64,
     "time_horizon": 500,
     "reward_scale": 0.01,
     "seq_len": 5,

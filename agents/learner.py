@@ -61,7 +61,7 @@ def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, 
     values_target = values + vs_minus_v_xs # vs_minus_v_xs는 V-trace를 통해 수정된 가치 추정치
     advantages = rho_clipped * (rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * values_target[:, 1:] - values[:, :-1])
     
-    return rho, advantages.detach(), values_target.detach()
+    return rho_clipped, advantages.detach(), values_target.detach()
 
 
 class Learner:
