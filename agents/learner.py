@@ -130,7 +130,7 @@ class Learner:
                 self.writer.add_scalar(stat_dict["tag"], stat_dict["y"], stat_dict["x"])
             except queue.Empty:
                 # 큐가 비어있음을 처리
-                # TODO: 좋은 형태의 구조는 아님
+                #TODO: 좋은 형태의 구조는 아님
                 print("stat_queue is empty.")
 
         if timer is not None and isinstance(timer, ExecutionTimer):

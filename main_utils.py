@@ -1,5 +1,6 @@
 import os, sys
-import argparse
+import signal
+import atexit
 import gym
 
 import torch
@@ -31,7 +32,7 @@ def register(fn):
     return fn
 
 
-# TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
+#TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
 DataFrameKeyword = [
     "obs_batch",
     "act_batch",
@@ -77,6 +78,10 @@ learner_model.to(args.device)
 learner_model_state_dict = learner_model.cpu().state_dict()
 
 
+def dummy_process():
+    ...  # 아무 작업도 수행하지 않음
+
+
 def extract_err(target_dir: str):
     log_dir = os.path.join(os.getcwd(), "logs", target_dir)
     if not os.path.isdir(log_dir):
@@ -119,7 +124,6 @@ def manager_sub_process():
 @register
 def worker_sub_process():
     try:
-        worker_process = []
         for i in range(args.num_worker):
             print("Build Worker {:d}".format(i))
             worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
@@ -132,12 +136,12 @@ def worker_sub_process():
                 args=(args, worker_model, worker_name, args.worker_port, *obs_shape),
                 daemon=True,
             )  # child-processes
-            worker_process.append(w)
+            child_process.append(w)
 
-        for wp in worker_process:
+        for wp in child_process:
             wp.start()
 
-        for wp in worker_process:
+        for wp in child_process:
             wp.join()
 
     except:
@@ -146,7 +150,7 @@ def worker_sub_process():
         err, log_dir = extract_err("worker")
         SaveErrorLog(err, log_dir)
 
-        for wp in worker_process:
+        for wp in child_process:
             wp.terminate()
                 
         
@@ -156,14 +160,13 @@ def learner_sub_process():
         queue = mp.Queue(1024)
         stat_queue = mp.Queue(64) #TODO: 좋은 구조는 아님.
         
-        learner_process = []
         s = Process(
             target=storage_run,
             args=(args, mutex, DataFrameKeyword, queue, *obs_shape),
             kwargs={"stat_queue": stat_queue},
             daemon=True,
         )  # child-processes
-        learner_process.append(s)
+        child_process.append(s)
 
         l = Process(
             target=run_learner,
@@ -171,12 +174,12 @@ def learner_sub_process():
             kwargs={"stat_queue": stat_queue},
             daemon=True,
         )  # child-processes
-        learner_process.append(l)
+        child_process.append(l)
 
-        for lp in learner_process:
+        for lp in child_process:
             lp.start()
 
-        for lp in learner_process:
+        for lp in child_process:
             lp.join()
 
     except:
@@ -185,15 +188,46 @@ def learner_sub_process():
         err, log_dir = extract_err("learner")
         SaveErrorLog(err, log_dir)
 
-        for lp in learner_process:
+        for lp in child_process:
             lp.terminate()
             
             
-if __name__ == "__main__":
-    assert len(sys.argv) == 2
+if __name__ == "__main__":    
+    _ = Process(target=dummy_process, daemon=True)
     
-    func_name = sys.argv[1]
-    if func_name in fn_dict:
-        fn_dict[func_name]()
-    else:
-        assert False, f"Wronf func_name: {func_name}"            
+    # 자식 프로세스 목록
+    child_process = [_] # 안전한 종료를 위해 더미 프로세스 추가
+    
+    # 자식 프로세스 종료 함수
+    def terminate_processes(processes):
+        for p in processes:
+            if p.is_alive():
+                p.terminate()
+            p.join()    
+    
+    # 종료 시그널 핸들러 설정
+    def signal_handler(signum, frame):
+        print("Signal received, terminating processes")
+        terminate_processes(child_process)
+        
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+        
+    # 프로세스 종료 시 실행될 함수 등록
+    atexit.register(terminate_processes, child_process)        
+            
+    try:
+        assert len(sys.argv) == 2
+        func_name = sys.argv[1]
+        if func_name in fn_dict:
+            fn_dict[func_name]()
+        else:
+            assert False, f"Wronf func_name: {func_name}"
+    except Exception as e:
+        print(f"error: {e}")
+        traceback.print_exc(limit=128)
+        
+        for p in child_process:
+            p.terminate()    
+        for p in child_process:
+            p.join()
