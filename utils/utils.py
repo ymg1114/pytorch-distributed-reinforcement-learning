@@ -10,6 +10,8 @@ import blosc2
 import numpy as np
 import torchvision.transforms as T
 
+from collections import deque, defaultdict
+from contextlib import contextmanager
 from enum import Enum, auto
 from pathlib import Path
 
@@ -103,6 +105,22 @@ def counted(f):
     wrapper.calls = 0
     return wrapper
 
+
+class ExecutionTimer:
+    def __init__(self, threshold=100):
+        self.timer_dict = defaultdict(lambda: deque(maxlen=threshold))
+
+    @contextmanager
+    def timer(self, code_block_name: str):
+        start_time = time.time()
+        yield  # 사용자가 지정 코드 블록이 실행되는 부분
+        end_time = time.time()
+
+        elapsed_time = end_time - start_time
+
+        self.timer_dict[code_block_name].append(elapsed_time)
+        # avg_time = sum(self.exec_times) / len(self.exec_times)
+        
 
 def SaveErrorLog(error: str, log_dir: str):
     current_time = time.strftime("[%Y_%m_%d][%H_%M_%S]", time.localtime(time.time()))

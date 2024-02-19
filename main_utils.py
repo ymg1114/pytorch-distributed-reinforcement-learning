@@ -103,6 +103,7 @@ def run_learner(args, mutex, learner_model, queue, stat_queue=None):
     learning = learning_switcher.get(args.algo, lambda: AssertionError("Should be PPO or IMPALA"))
     learning()
 
+
 @register
 def manager_sub_process():    
     try:
@@ -153,7 +154,7 @@ def worker_sub_process():
 def learner_sub_process():
     try:
         queue = mp.Queue(1024)
-        stat_queue = mp.Queue(64) # 좋은 구조는 아님.
+        stat_queue = mp.Queue(64) #TODO: 좋은 구조는 아님.
         
         learner_process = []
         s = Process(

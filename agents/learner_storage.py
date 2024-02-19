@@ -208,7 +208,7 @@ class LearnerStorage:
             if self.stat_queue is not None and isinstance(self.stat_queue, mp.queues.Queue):         
                 self.stat_queue.put(stat_dict)
             # else:
-            #     self.writer.add_scalar(tag, y, x) # 좋은 구조는 아님
+            #     self.writer.add_scalar(tag, y, x) #TODO: 좋은 구조는 아님
             print(f"tag: {tag}, y: {y}, x: {x}")
 
     def make_batch(self, rollout):

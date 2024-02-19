@@ -158,7 +158,7 @@ if __name__ == "__main__":
             child_procs.append(w)
 
         queue = mp.Queue(1024)
-        stat_queue = mp.Queue(64) # 좋은 구조는 아님.
+        stat_queue = mp.Queue(64) #TODO: 좋은 구조는 아님.
         s = Process(
             target=storage_run,
             args=(args, mutex, DataFrameKeyword, queue, *obs_shape),
