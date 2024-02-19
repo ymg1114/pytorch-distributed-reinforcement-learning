@@ -107,18 +107,23 @@ def counted(f):
 
 
 class ExecutionTimer:
-    def __init__(self, threshold=100):
+    def __init__(self, threshold=100, num_transition=None):
+        self.num_transition = num_transition
         self.timer_dict = defaultdict(lambda: deque(maxlen=threshold))
-
+        self.throughput_dict = defaultdict(lambda: deque(maxlen=threshold))
+        
     @contextmanager
-    def timer(self, code_block_name: str):
+    def timer(self, code_block_name: str, check_throughput=False):
         start_time = time.time()
         yield  # 사용자가 지정 코드 블록이 실행되는 부분
         end_time = time.time()
 
         elapsed_time = end_time - start_time
 
-        self.timer_dict[code_block_name].append(elapsed_time)
+        self.timer_dict[code_block_name].append(elapsed_time) # sec
+        if self.num_transition is not None and isinstance(self.num_transition, (int, float, np.number)):
+            if check_throughput is True:
+                self.throughput_dict[code_block_name].append(self.num_transition / (elapsed_time+1e-6)) # transition/sec
         # avg_time = sum(self.exec_times) / len(self.exec_times)
         
 

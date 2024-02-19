@@ -10,11 +10,11 @@ from functools import partial
 import multiprocessing as mp
 import queue
 
-from utils.utils import Protocol, encode, make_gpu_batch, WriterClass, L_IP, ExecutionTimer
+from utils.utils import Protocol, encode, make_gpu_batch, WriterClass, L_IP, ExecutionTimer, Params
 from torch.optim import Adam, RMSprop
 
 
-timer = ExecutionTimer()
+timer = ExecutionTimer(num_transition=Params.seq_len*Params.batch_size) # Learner에서 데이터 처리량 (학습)
 
 
 def compute_gae(
@@ -40,10 +40,11 @@ def compute_gae(
     return torch.stack(returns, dim=1)
 
 
-def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, gamma, rho_bar=0.7, c_bar=1.0):
+def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, gamma, rho_bar=0.8, c_bar=1.0):
     # Importance sampling weights (rho)
     rho = torch.exp(target_log_probs[:, :-1] - behav_log_probs[:, :-1]).detach() # a/b == exp(log(a)-log(b))
-    rho_clipped = torch.clamp(rho, max=rho_bar)
+    # rho_clipped = torch.clamp(rho, max=rho_bar)
+    rho_clipped = torch.clamp(rho, min=0.1, max=rho_bar)
     
     # truncated importance weights (c)
     c = torch.exp(target_log_probs[:, :-1] - behav_log_probs[:, :-1]).detach() # a/b == exp(log(a)-log(b))
@@ -127,7 +128,11 @@ class Learner:
                 assert "tag" in stat_dict
                 assert "x" in stat_dict
                 assert "y" in stat_dict
-                self.writer.add_scalar(stat_dict["tag"], stat_dict["y"], stat_dict["x"])
+                
+                #TODO: 좋은 형태의 구조는 아님. LearnerStorage 쓰루풋을 텐서보드에 기록하기 위함.
+                x = self.idx if "learner-storage-throughput" in stat_dict["tag"] else stat_dict["x"]
+                self.writer.add_scalar(stat_dict["tag"], stat_dict["y"], x)
+                
             except queue.Empty:
                 # 큐가 비어있음을 처리
                 #TODO: 좋은 형태의 구조는 아님
@@ -136,19 +141,24 @@ class Learner:
         if timer is not None and isinstance(timer, ExecutionTimer):
             for k, v in timer.timer_dict.items():
                 self.writer.add_scalar(
-                    f"{k}-mean-sec", sum(v) / len(v), self.idx
-                )     
-        
+                    f"{k}-mean-sec", sum(v) / (len(v) + 1e-6), self.idx
+                )
+            for k, v in timer.throughput_dict.items():
+                self.writer.add_scalar(
+                    f"{k}-transition-per-secs", sum(v) / (len(v) + 1e-6), self.idx
+                )
+                        
     # PPO
     def learning_ppo(self):
         self.idx = 0
 
         while True:
             batch_args = None
-            with self.mutex.lock():
+            with timer.timer("learner-throughput", check_throughput=True):
+                # with self.mutex.lock():
                 with timer.timer("learner-batching-time"):
                     batch_args = self.batch_queue.get()
-                    
+
                 if batch_args is not None:
                     with timer.timer("learner-forward-time"):
                         # Basically, mini-batch-learning (batch, seq, feat)
@@ -215,22 +225,22 @@ class Learner:
                                 "ratio": ratio.detach().cpu(),
                             }
                             
-                        with timer.timer("learner-backward-time"):
-                            self.optimizer.zero_grad()
-                            loss.backward()
-                            torch.nn.utils.clip_grad_norm_(
-                                self.model.parameters(), self.args.max_grad_norm
+                    with timer.timer("learner-backward-time"):
+                        self.optimizer.zero_grad()
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), self.args.max_grad_norm
+                        )
+                        print(
+                            "loss: {:.5f} original_value_loss: {:.5f} original_policy_loss: {:.5f} original_policy_entropy: {:.5f} ratio-avg: {:.5f}".format(
+                                loss.item(),
+                                detached_losses["value-loss"],
+                                detached_losses["policy-loss"],
+                                detached_losses["policy-entropy"],
+                                detached_losses["ratio"].mean(),
                             )
-                            print(
-                                "loss: {:.5f} original_value_loss: {:.5f} original_policy_loss: {:.5f} original_policy_entropy: {:.5f} ratio-avg: {:.5f}".format(
-                                    loss.item(),
-                                    detached_losses["value-loss"],
-                                    detached_losses["policy-loss"],
-                                    detached_losses["policy-entropy"],
-                                    detached_losses["ratio"].mean(),
-                                )
-                            )
-                            self.optimizer.step()
+                        )
+                        self.optimizer.step()
 
                     self.pub_model(self.model.state_dict())
 
@@ -251,60 +261,61 @@ class Learner:
 
         while True:
             batch_args = None
-            with self.mutex.lock():
+            with timer.timer("learner-throughput", check_throughput=True):
+                # with self.mutex.lock():
                 with timer.timer("learner-batching-time"):
                     batch_args = self.batch_queue.get()
 
-            if batch_args is not None:
-                with timer.timer("learner-forward-time"):
-                    # Basically, mini-batch-learning (batch, seq, feat)
-                    obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
-                    behav_log_probs = (
-                        self.CT(F.softmax(logits, dim=-1))
-                        .log_prob(act.squeeze(-1))
-                        .unsqueeze(-1)
-                    )
-
-                    # epoch-learning
-                    for _ in range(self.args.K_epoch):
-                        lstm_states = (
-                            hx[:, 0],
-                            cx[:, 0],
-                        )  # (batch, seq, hidden) -> (batch, hidden)
-
-                        # on-line model forwarding
-                        log_probs, entropy, value = self.model(
-                            obs,  # (batch, seq, *sha)
-                            lstm_states,  # ((batch, hidden), (batch, hidden))
-                            act,  # (batch, seq, 1)
+                if batch_args is not None:
+                    with timer.timer("learner-forward-time"):
+                        # Basically, mini-batch-learning (batch, seq, feat)
+                        obs, act, rew, logits, is_fir, hx, cx = self.to_gpu(*batch_args)
+                        behav_log_probs = (
+                            self.CT(F.softmax(logits, dim=-1))
+                            .log_prob(act.squeeze(-1))
+                            .unsqueeze(-1)
                         )
-                        
-                        # V-trace를 사용하여 off-policy corrections 연산
-                        ratio, advantages, values_target = compute_v_trace(
-                            behav_log_probs=behav_log_probs, 
-                            target_log_probs=log_probs,
-                            is_fir=is_fir,
-                            rewards=rew,
-                            values=value, 
-                            gamma=self.args.gamma,
+
+                        # epoch-learning
+                        for _ in range(self.args.K_epoch):
+                            lstm_states = (
+                                hx[:, 0],
+                                cx[:, 0],
+                            )  # (batch, seq, hidden) -> (batch, hidden)
+
+                            # on-line model forwarding
+                            log_probs, entropy, value = self.model(
+                                obs,  # (batch, seq, *sha)
+                                lstm_states,  # ((batch, hidden), (batch, hidden))
+                                act,  # (batch, seq, 1)
                             )
-                        
-                        loss_policy = -(log_probs[:, :-1] * advantages).mean()
-                        loss_value = F.smooth_l1_loss(value[:, :-1], values_target[:, :-1]).mean()
-                        policy_entropy = entropy[:, :-1].mean()
+                            
+                            # V-trace를 사용하여 off-policy corrections 연산
+                            ratio, advantages, values_target = compute_v_trace(
+                                behav_log_probs=behav_log_probs, 
+                                target_log_probs=log_probs,
+                                is_fir=is_fir,
+                                rewards=rew,
+                                values=value, 
+                                gamma=self.args.gamma,
+                                )
+                            
+                            loss_policy = -(log_probs[:, :-1] * advantages).mean()
+                            loss_value = F.smooth_l1_loss(value[:, :-1], values_target[:, :-1]).mean()
+                            policy_entropy = entropy[:, :-1].mean()
 
-                        loss = (
-                            self.args.policy_loss_coef * loss_policy
-                            + self.args.value_loss_coef * loss_value
-                            - self.args.entropy_coef * policy_entropy
-                        )
+                            loss = (
+                                self.args.policy_loss_coef * loss_policy
+                                + self.args.value_loss_coef * loss_value
+                                - self.args.entropy_coef * policy_entropy
+                            )
 
-                        detached_losses = {
-                            "policy-loss": loss_policy.detach().cpu(),
-                            "value-loss": loss_value.detach().cpu(),
-                            "policy-entropy": policy_entropy.detach().cpu(),
-                            "ratio": ratio.detach().cpu(),
-                        }
+                            detached_losses = {
+                                "policy-loss": loss_policy.detach().cpu(),
+                                "value-loss": loss_value.detach().cpu(),
+                                "policy-entropy": policy_entropy.detach().cpu(),
+                                "ratio": ratio.detach().cpu(),
+                            }
 
                     with timer.timer("learner-backward-time"):
                         self.optimizer.zero_grad()
@@ -323,15 +334,15 @@ class Learner:
                         )
                         self.optimizer.step()
 
-                self.pub_model(self.model.state_dict())
+                    self.pub_model(self.model.state_dict())
 
-                if (self.idx % self.args.loss_log_interval == 0):
-                    self.log_loss_tensorboard(timer, loss, detached_losses)
-                    
-                if self.idx % self.args.model_save_interval == 0:
-                    torch.save(
-                        self.model,
-                        os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
-                    )
+                    if (self.idx % self.args.loss_log_interval == 0):
+                        self.log_loss_tensorboard(timer, loss, detached_losses)
+                        
+                    if self.idx % self.args.model_save_interval == 0:
+                        torch.save(
+                            self.model,
+                            os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
+                        )
 
-                self.idx += 1                
+                    self.idx += 1                

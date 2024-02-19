@@ -15,7 +15,7 @@
     "eps_clip": 0.1,
     "policy_loss_coef": 1.0,
     "value_loss_coef": 0.5,
-    "entropy_coef": 0.0001,
+    "entropy_coef": 0.00005,
     "K_epoch": 1,
     "lr": 0.0001,
     "max_grad_norm": 40,

@@ -231,3 +231,6 @@ if __name__ == "__main__":
             p.terminate()    
         for p in child_process:
             p.join()
+            
+    finally:
+        KillProcesses(os.getpid())            
