@@ -22,7 +22,7 @@
     "loss_log_interval": 50,
     "model_save_interval": 100,
     "gpu_idx": 0,
-    "num_worker": 5,
+    "num_worker": 30,
     "worker_port": 27165,
     "learner_port": 47165
 }

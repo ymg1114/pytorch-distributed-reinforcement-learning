@@ -159,15 +159,16 @@ class LearnerStorage:
             else:
                 assert False, f"Wrong protocol: {protocol}"
 
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.001)
 
     async def build_as_batch(self):
         while True:
             with timer.timer("learner-storage-throughput", check_throughput=True):
                 data = await self.rollout_assembler.pop()
                 self.make_batch(data)
-
-            await asyncio.sleep(0.01)
+                print("rollout is poped !")
+                
+            await asyncio.sleep(0.001)
 
     async def put_batch_to_batch_q(self):
         while True:
@@ -176,8 +177,9 @@ class LearnerStorage:
                 batch_args = self.get_batch_from_sh_memory()
                 self.batch_queue.put(batch_args)
                 self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
-
-            await asyncio.sleep(0.01)
+                print("batch is ready !")
+                
+            await asyncio.sleep(0.001)
 
     def process_stat(self):
         mean_stat = {}

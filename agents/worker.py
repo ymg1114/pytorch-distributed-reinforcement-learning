@@ -1,6 +1,7 @@
 import os, sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+import uuid
 import time
 import zmq
 import gym
@@ -75,6 +76,7 @@ class Worker:
         stat = {}
         stat.update({"epi_rew": self.epi_rew})
         self.pub_socket.send_multipart([*encode(Protocol.Stat, stat)])
+        print(f"worker_name: {self.worker_name} epi_rew: {self.epi_rew} pub stat to manager!")
 
     def collect_rolloutdata(self):
         print("Build Environment for {}".format(self.worker_name))
@@ -82,7 +84,9 @@ class Worker:
         self.num_epi = 0
         while True:
             obs = self.env.reset()
-            _id = int(np.random.random() * 10000000)
+            # _id = uuid.uuid4().int
+            _id = str(uuid.uuid4()) # 고유한 난수 생성
+            
             # print(f"worker_name: {self.worker_name}, obs: {obs}")
             lstm_hx = (
                 torch.zeros(self.args.hidden_size),
@@ -118,7 +122,7 @@ class Worker:
                 obs = next_obs
                 lstm_hx = lstm_hx_next
 
-                time.sleep(0.01)
+                time.sleep(0.05)
 
                 if done:
                     break

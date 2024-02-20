@@ -56,7 +56,7 @@ class Manager:
                 self.data_q.popleft()  # FIFO
             self.data_q.append((protocol, data))
 
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.001)
 
     async def pub_data(self):
         while True:
@@ -86,7 +86,7 @@ class Manager:
                 else:
                     assert False, f"Wrong protocol: {protocol}"
 
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.001)
 
     async def data_chain(self):
         tasks = [

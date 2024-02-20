@@ -78,10 +78,6 @@ learner_model.to(args.device)
 learner_model_state_dict = learner_model.cpu().state_dict()
 
 
-def dummy_process():
-    ...  # 아무 작업도 수행하지 않음
-
-
 def extract_err(target_dir: str):
     log_dir = os.path.join(os.getcwd(), "logs", target_dir)
     if not os.path.isdir(log_dir):
@@ -153,7 +149,7 @@ def worker_sub_process():
         for wp in child_process:
             wp.terminate()
                 
-        
+
 @register
 def learner_sub_process():
     try:
@@ -193,36 +189,39 @@ def learner_sub_process():
             
             
 if __name__ == "__main__":    
-    _ = Process(target=dummy_process, daemon=True)
-    
     # 자식 프로세스 목록
-    child_process = [_] # 안전한 종료를 위해 더미 프로세스 추가
-    
-    # 자식 프로세스 종료 함수
-    def terminate_processes(processes):
-        for p in processes:
-            if p.is_alive():
-                p.terminate()
-            p.join()    
-    
-    # 종료 시그널 핸들러 설정
-    def signal_handler(signum, frame):
-        print("Signal received, terminating processes")
-        terminate_processes(child_process)
+    child_process = []
         
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    assert len(sys.argv) == 2
+    func_name = sys.argv[1]
+    
+    if func_name != "manager_sub_process":
+        assert func_name in ("worker_sub_process", "learner_sub_process")
         
-    # 프로세스 종료 시 실행될 함수 등록
-    atexit.register(terminate_processes, child_process)        
+        # 자식 프로세스 종료 함수
+        def terminate_processes(processes):
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+                p.join()    
+        
+        # 종료 시그널 핸들러 설정
+        def signal_handler(signum, frame):
+            print("Signal received, terminating processes")
+            terminate_processes(child_process)
+            
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+            
+        # 프로세스 종료 시 실행될 함수 등록
+        atexit.register(terminate_processes, child_process)        
             
     try:
-        assert len(sys.argv) == 2
-        func_name = sys.argv[1]
         if func_name in fn_dict:
             fn_dict[func_name]()
         else:
             assert False, f"Wronf func_name: {func_name}"
+            
     except Exception as e:
         print(f"error: {e}")
         traceback.print_exc(limit=128)
