@@ -10,7 +10,7 @@ pickle
 pathlib
 opencv-python
 torch
-torchvision
+# torchvision
 tensorboard
 tensorflow == 2.4.0
 tensorboardX

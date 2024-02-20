@@ -137,8 +137,8 @@ def worker_sub_process():
         for wp in child_process:
             wp.start()
 
-        # for wp in child_process:
-        #     wp.join()
+        for wp in child_process:
+            wp.join()
 
     except:
         traceback.print_exc(limit=128)
@@ -177,8 +177,8 @@ def learner_sub_process():
 
         run_learner(args, mutex, learner_model, queue, stat_queue=stat_queue)
         
-        # for lp in child_process:
-        #     lp.join()
+        for lp in child_process:
+            lp.join()
 
     except:
         traceback.print_exc(limit=128)
