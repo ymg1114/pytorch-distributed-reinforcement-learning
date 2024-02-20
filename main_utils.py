@@ -137,8 +137,8 @@ def worker_sub_process():
         for wp in child_process:
             wp.start()
 
-        for wp in child_process:
-            wp.join()
+        # for wp in child_process:
+        #     wp.join()
 
     except:
         traceback.print_exc(limit=128)
@@ -146,8 +146,8 @@ def worker_sub_process():
         err, log_dir = extract_err("worker")
         SaveErrorLog(err, log_dir)
 
-        for wp in child_process:
-            wp.terminate()
+        # for wp in child_process:
+        #     wp.terminate()
                 
 
 @register
@@ -164,19 +164,21 @@ def learner_sub_process():
         )  # child-processes
         child_process.append(s)
 
-        l = Process(
-            target=run_learner,
-            args=(args, mutex, learner_model, queue),
-            kwargs={"stat_queue": stat_queue},
-            daemon=True,
-        )  # child-processes
-        child_process.append(l)
+        # l = Process(
+        #     target=run_learner,
+        #     args=(args, mutex, learner_model, queue),
+        #     kwargs={"stat_queue": stat_queue},
+        #     daemon=True,
+        # )  # child-processes
+        # child_process.append(l)
 
         for lp in child_process:
             lp.start()
 
-        for lp in child_process:
-            lp.join()
+        run_learner(args, mutex, learner_model, queue, stat_queue=stat_queue)
+        
+        # for lp in child_process:
+        #     lp.join()
 
     except:
         traceback.print_exc(limit=128)
@@ -184,8 +186,8 @@ def learner_sub_process():
         err, log_dir = extract_err("learner")
         SaveErrorLog(err, log_dir)
 
-        for lp in child_process:
-            lp.terminate()
+        # for lp in child_process:
+        #     lp.terminate()
             
             
 if __name__ == "__main__":    
@@ -195,7 +197,7 @@ if __name__ == "__main__":
     assert len(sys.argv) == 2
     func_name = sys.argv[1]
     
-    if func_name != "manager_sub_process":
+    if func_name != "manager_sub_process": # manager는 관리할 자식 프로세스가 없기 때문.
         assert func_name in ("worker_sub_process", "learner_sub_process")
         
         # 자식 프로세스 종료 함수
@@ -227,9 +229,10 @@ if __name__ == "__main__":
         traceback.print_exc(limit=128)
         
         for p in child_process:
-            p.terminate()    
+            p.terminate()
+              
         for p in child_process:
             p.join()
             
     finally:
-        KillProcesses(os.getpid())            
+        KillProcesses(os.getpid())
