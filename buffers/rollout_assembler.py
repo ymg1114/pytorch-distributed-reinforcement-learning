@@ -58,10 +58,10 @@ class RolloutAssembler:
                     [(tj.len, id) for id, tj in self.roll_q_done.items()]
                 )  # 데이터의 크기 (roll 개수)가 가장 작은 Trajectory 추출
                 tj_ = self.roll_q_done.pop(id_)
+                data["is_fir"] = torch.FloatTensor([1.0])   
             else:
                 tj_ = Trajectory2(self.seq_len, time.monotonic())  # Trajectory 객체 신규 생성을 통한 할당
-                
-            data["is_fir"] = torch.FloatTensor([1.0])    
+                 
             tj_.put(data)
             self.roll_q[_id] = tj_
 

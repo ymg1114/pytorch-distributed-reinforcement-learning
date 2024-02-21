@@ -43,11 +43,11 @@ class Mutex:
         return
 
     def get(self, queue: mp.Queue):
-        with self.mutex():
+        with self.lock():
             data = queue.get()
         return data
 
     def put(self, queue: mp.Queue, data):
-        with self.mutex():
+        with self.lock():
             queue.put(data)
         return

@@ -19,9 +19,6 @@ from utils.utils import KillProcesses, SaveErrorLog, Params, WriterClass
 from utils.lock import Mutex
 
 
-mutex = Mutex()
-
-
 # TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
 DataFrameKeyword = [
     "obs_batch",
@@ -157,6 +154,7 @@ if __name__ == "__main__":
             )  # child-processes
             child_procs.append(w)
 
+        mutex = Mutex()
         queue = mp.Queue(1024)
         stat_queue = mp.Queue(64) #TODO: 좋은 구조는 아님.
         s = Process(
