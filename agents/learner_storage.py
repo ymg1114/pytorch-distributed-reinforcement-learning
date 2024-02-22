@@ -21,7 +21,7 @@ class LearnerStorage:
         self.obs_shape = obs_shape
 
         self.stat_list = []
-        self.stat_log_len = 20
+        self.stat_log_len = 10
         self.mutex: Mutex = mutex
         self._init = False
 

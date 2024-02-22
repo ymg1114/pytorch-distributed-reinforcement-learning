@@ -16,7 +16,7 @@ class Manager:
         self.data_q = deque(maxlen=1024)
 
         self.stat_list = []
-        self.stat_log_len = 20
+        self.stat_log_len = 10
         self.zeromq_set(worker_port)
 
     def __del__(self): # 소멸자
