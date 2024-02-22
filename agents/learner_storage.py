@@ -137,13 +137,13 @@ class LearnerStorage:
         self.rollout_assembler = RolloutAssembler(self.args, asyncio.Queue(1024))
 
         tasks = [
-            asyncio.create_task(self.retrieve_data_from_worker()),
+            asyncio.create_task(self.retrieve_rollout_from_worker()),
             asyncio.create_task(self.build_as_batch()),
             asyncio.create_task(self.put_batch_to_batch_q()),
         ]
         await asyncio.gather(*tasks)
 
-    async def retrieve_data_from_worker(self):
+    async def retrieve_rollout_from_worker(self):
         while True:
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Rollout:
