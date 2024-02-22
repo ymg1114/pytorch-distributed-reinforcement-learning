@@ -1,16 +1,16 @@
 import os
 import zmq
-
+import time
+import queue
 import torch
 import torch.nn.functional as F
+import multiprocessing as mp
 
 from torch.distributions import Categorical
 from functools import partial
 
-import multiprocessing as mp
-import queue
-
-from utils.utils import Protocol, encode, make_gpu_batch, WriterClass, L_IP, ExecutionTimer, Params
+from utils.lock import Mutex
+from utils.utils import Protocol, encode, make_gpu_batch, writer, L_IP, ExecutionTimer, Params
 from torch.optim import Adam, RMSprop
 
 
@@ -66,12 +66,13 @@ def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, 
 
 
 class Learner:
-    def __init__(self, args, mutex, model, queue, stat_queue=None):
+    def __init__(self, args, mutex, model, queue, stat_queue=None, heartbeat=None):
         self.args = args
-        self.mutex = mutex
+        self.mutex: Mutex = mutex
         self.batch_queue = queue
         self.stat_queue = stat_queue
-
+        self.heartbeat = heartbeat
+        
         self.device = self.args.device
         self.model = model.to(self.device)
 
@@ -82,10 +83,8 @@ class Learner:
         self.to_gpu = partial(make_gpu_batch, device=self.device)
 
         self.stat_list = []
-        self.stat_log_len = 20
         self.zeromq_set()
-        self.mean_cal_interval = 30
-        self.writer = WriterClass.wr
+        self.writer = writer
         
     def __del__(self): # 소멸자
         self.pub_socket.close()
@@ -155,10 +154,11 @@ class Learner:
         while True:
             batch_args = None
             with timer.timer("learner-throughput", check_throughput=True):
-                # with self.mutex.lock():
                 with timer.timer("learner-batching-time"):
                     batch_args = self.batch_queue.get()
-
+                    # batch_args = self.mutex.get(self.batch_queue)
+                    # batch_args = self.mutex.get_with_timeout(self.batch_queue)
+                    
                 if batch_args is not None:
                     with timer.timer("learner-forward-time"):
                         # Basically, mini-batch-learning (batch, seq, feat)
@@ -245,16 +245,18 @@ class Learner:
                     self.pub_model(self.model.state_dict())
 
                     if (self.idx % self.args.loss_log_interval == 0):
-                        self.log_loss_tensorboard(loss, detached_losses)
+                        self.log_loss_tensorboard(timer, loss, detached_losses)
                         
                     if self.idx % self.args.model_save_interval == 0:
                         torch.save(
                             self.model,
-                            os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
+                            os.path.join(self.args.model_dir, f"{self.args.algo}_{self.idx}.pt"),
                         )
 
                     self.idx += 1
-                
+                    
+                if self.heartbeat is not None:
+                    self.heartbeat.value = time.time()
     # IMPALA
     def learning_impala(self):
         self.idx = 0
@@ -262,10 +264,11 @@ class Learner:
         while True:
             batch_args = None
             with timer.timer("learner-throughput", check_throughput=True):
-                # with self.mutex.lock():
                 with timer.timer("learner-batching-time"):
                     batch_args = self.batch_queue.get()
-
+                    # batch_args = self.mutex.get(self.batch_queue)
+                    # batch_args = self.mutex.get_with_timeout(self.batch_queue)
+                    
                 if batch_args is not None:
                     with timer.timer("learner-forward-time"):
                         # Basically, mini-batch-learning (batch, seq, feat)
@@ -342,7 +345,10 @@ class Learner:
                     if self.idx % self.args.model_save_interval == 0:
                         torch.save(
                             self.model,
-                            os.path.join(self.args.model_dir, f"ppo_{self.idx}.pt"),
+                            os.path.join(self.args.model_dir, f"{self.args.algo}_{self.idx}.pt"),
                         )
 
-                    self.idx += 1                
+                    self.idx += 1
+
+                if self.heartbeat is not None:
+                    self.heartbeat.value = time.time()                   

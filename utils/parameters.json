@@ -1,6 +1,8 @@
 {
     "env": "CartPole-v1",
     "algo": "IMPALA",
+    "result_dir": null,
+    "model_dir": null,
     "need_conv": false,
     "height": 84,
     "width": 84,

@@ -1,3 +1,4 @@
+import time
 import zmq
 import zmq.asyncio
 import asyncio
@@ -6,29 +7,30 @@ import numpy as np
 import multiprocessing as mp
 
 from buffers.rollout_assembler import RolloutAssembler
-from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, WriterClass, LS_IP, ExecutionTimer, Params
+from utils.lock import Mutex
+from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, LS_IP, ExecutionTimer, Params
 
 
 timer = ExecutionTimer(num_transition=Params.seq_len*1) # LearnerStorage에서 데이터 처리량 (수신) / 부정확한 값이지만 어쩔 수 없음
 
 
 class LearnerStorage:
-    def __init__(self, args, mutex, dataframe_keyword, queue, obs_shape, stat_queue=None):
+    def __init__(self, args, mutex, dataframe_keyword, queue, obs_shape, stat_queue=None, heartbeat=None):
         self.args = args
         self.dataframe_keyword = dataframe_keyword
         self.obs_shape = obs_shape
 
         self.stat_list = []
         self.stat_log_len = 20
-        self.mutex = mutex
+        self.mutex: Mutex = mutex
         self._init = False
 
         self.batch_queue = queue
         self.stat_queue = stat_queue
+        self.heartbeat = heartbeat
 
         self.zeromq_set()
         self.reset_shared_memory()
-        # self.writer = WriterClass.wr
 
     def __del__(self): # 소멸자
         self.sub_socket.close()
@@ -145,7 +147,6 @@ class LearnerStorage:
         while True:
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Rollout:
-                # with self.mutex.lock():
                 await self.rollout_assembler.push(data)
 
             elif protocol is Protocol.Stat:
@@ -172,9 +173,12 @@ class LearnerStorage:
 
     async def put_batch_to_batch_q(self):
         while True:
-            # with self.mutex.lock():
+            if self.heartbeat is not None:
+                self.heartbeat.value = time.time()
+                       
             if self.is_sh_ready():
                 batch_args = self.get_batch_from_sh_memory()
+                # self.mutex.put(self.batch_queue, batch_args)
                 self.batch_queue.put(batch_args)
                 self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
                 print("batch is ready !")

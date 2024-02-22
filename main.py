@@ -15,21 +15,11 @@ from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
-from utils.utils import KillProcesses, SaveErrorLog, Params, WriterClass
+from utils.utils import KillProcesses, SaveErrorLog, Params, result_dir, model_dir, DataFrameKeyword
 from utils.lock import Mutex
 
-
-# TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
-DataFrameKeyword = [
-    "obs_batch",
-    "act_batch",
-    "rew_batch",
-    "logits_batch",
-    "is_fir_batch",
-    "hx_batch",
-    "cx_batch",
-    "batch_num",
-]
+"""주의) 코드 최신화 진행되지 않아 사용할 수 없음.
+"""
 
 
 def worker_run(args, model, worker_name, port, *obs_shape):
@@ -64,6 +54,9 @@ if __name__ == "__main__":
     p = Params
     parser.add_argument("--env", type=str, default=p.env)
     parser.add_argument("--algo", type=str, default=p.algo)
+    
+    parser.add_argument("--result-dir", type=str, default=p.result_dir)
+    parser.add_argument("--model-dir", type=str, default=p.model_dir)
     
     parser.add_argument("--need-conv", type=bool, default=p.need_conv)
     parser.add_argument("--width", type=int, default=p.width)
@@ -103,9 +96,10 @@ if __name__ == "__main__":
     args.device = torch.device(
         f"cuda:{p.gpu_idx}" if torch.cuda.is_available() else "cpu"
     )
-    args.result_dir = WriterClass.result_dir
-    args.model_dir = WriterClass.model_dir
-        
+    
+    # 미리 정해진 경로가 있다면 그것을 사용
+    args.result_dir = args.result_dir or result_dir
+    args.model_dir = args.model_dir or model_dir
     print(f"device: {args.device}")
 
     try:

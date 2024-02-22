@@ -26,6 +26,19 @@ with open(utils) as f:
     Params = SimpleNamespace(**_p)
 
 
+#TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
+DataFrameKeyword = [
+    "obs_batch",
+    "act_batch",
+    "rew_batch",
+    "logits_batch",
+    "is_fir_batch",
+    "hx_batch",
+    "cx_batch",
+    "batch_num",
+]
+
+
 class MetaclassSingleton(type):
     _instance = {}
     def __call__(cls,*args,**kwargs):
@@ -34,12 +47,11 @@ class MetaclassSingleton(type):
         return cls._instance[cls]
 
 
-class WriterClass(metaclass=MetaclassSingleton):
-    dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
-    result_dir = os.path.join("results", str(dt_string))
-    model_dir = os.path.join(result_dir, "models")
+dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
+result_dir = os.path.join("results", str(dt_string))
+model_dir = os.path.join(result_dir, "models")
 
-    wr = SummaryWriter(log_dir=result_dir)  # tensorboard-log
+writer = SummaryWriter(log_dir=result_dir)  # tensorboard-log
 
 
 LS_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
@@ -53,6 +65,14 @@ flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float64)
 
 to_torch = lambda nparray: torch.from_numpy(nparray).type(torch.float32)
 
+
+def extract_file_num(filename):
+    parts = filename.stem.split('_')
+    try:
+        return int(parts[-1])
+    except ValueError:
+        return -1
+    
 
 def make_gpu_batch(*args, device):
     to_gpu = lambda tensor: tensor.to(device)

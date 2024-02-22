@@ -1,6 +1,7 @@
 import os, sys
 import signal
 import atexit
+import time
 import gym
 
 import torch
@@ -17,7 +18,7 @@ from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
-from utils.utils import KillProcesses, SaveErrorLog, Params, WriterClass
+from utils.utils import KillProcesses, SaveErrorLog, Params, result_dir, model_dir, extract_file_num, DataFrameKeyword
 from utils.lock import Mutex
 
 
@@ -29,31 +30,21 @@ def register(fn):
     return fn
 
 
-#TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
-DataFrameKeyword = [
-    "obs_batch",
-    "act_batch",
-    "rew_batch",
-    "logits_batch",
-    "is_fir_batch",
-    "hx_batch",
-    "cx_batch",
-    "batch_num",
-]
-
 args = Params
 args.device = torch.device(
     f"cuda:{Params.gpu_idx}" if torch.cuda.is_available() else "cpu"
 )
-args.result_dir = WriterClass.result_dir
-args.model_dir = WriterClass.model_dir
+
+# 미리 정해진 경로가 있다면 그것을 사용
+args.result_dir = args.result_dir or result_dir
+args.model_dir = args.model_dir or model_dir
 print(f"device: {args.device}")
 
-model_dir = Path(args.model_dir)
+_model_dir = Path(args.model_dir)
 # 경로가 디렉토리인지 확인
-if not model_dir.is_dir():
+if not _model_dir.is_dir():
     # 디렉토리가 아니라면 디렉토리 생성
-    model_dir.mkdir(parents=True, exist_ok=True)
+    _model_dir.mkdir(parents=True, exist_ok=True)
 
 # only to get observation, action space
 env = gym.make(args.env)
@@ -71,8 +62,23 @@ env.close()
 
 learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
 learner_model.to(args.device)
-# learner_model.share_memory() # 공유메모리 사용
-learner_model_state_dict = learner_model.cpu().state_dict()
+
+
+def set_model_weight(model_dir):
+    model_files = list(Path(model_dir).glob(f"{args.algo}_*.pt"))
+
+    prev_model_weight = None
+    if len(model_files) > 0:
+        sorted_files = sorted(model_files, key=extract_file_num)
+        if sorted_files:
+            prev_model_weight = torch.load(sorted_files[-1], map_location=torch.device(args.device))
+
+    learner_model_state_dict = learner_model.cpu().state_dict()
+    if prev_model_weight is not None: 
+        learner_model.load_state_dict(prev_model_weight.state_dict())    
+        
+        learner_model_state_dict = {k: v.cpu() for k, v in prev_model_weight.state_dict().items()}
+    return learner_model_state_dict
 
 
 def extract_err(target_dir: str):
@@ -82,18 +88,18 @@ def extract_err(target_dir: str):
     return traceback.format_exc(limit=128), log_dir
 
 
-def worker_run(args, model, worker_name, port, *obs_shape):
-    worker = Worker(args, model, worker_name, port, obs_shape)
+def worker_run(args, model, worker_name, port, *obs_shape, heartbeat=None):
+    worker = Worker(args, model, worker_name, port, obs_shape, heartbeat)
     worker.collect_rolloutdata()  # collect rollout
     
     
-def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape, stat_queue=None):
-    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape, stat_queue)
+def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape, stat_queue=None, heartbeat=None):
+    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape, stat_queue, heartbeat)
     asyncio.run(storage.shared_memory_chain())
 
 
-def run_learner(args, mutex, learner_model, queue, stat_queue=None):
-    learner = Learner(args, mutex, learner_model, queue, stat_queue)
+def run_learner(args, mutex, learner_model, queue, stat_queue=None, heartbeat=None):
+    learner = Learner(args, mutex, learner_model, queue, stat_queue, heartbeat)
     learning_switcher = {
         "PPO": learner.learning_ppo,
         "IMPALA": learner.learning_impala,
@@ -117,6 +123,8 @@ def manager_sub_process():
 @register
 def worker_sub_process():
     try:
+        learner_model_state_dict = set_model_weight(args.model_dir)
+        
         for i in range(args.num_worker):
             print("Build Worker {:d}".format(i))
             worker_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
@@ -124,18 +132,20 @@ def worker_sub_process():
             worker_model.load_state_dict(learner_model_state_dict)
             worker_name = "worker_" + str(i)
 
+            heartbeat = mp.Value('d', time.time())
             w = Process(
                 target=worker_run,
                 args=(args, worker_model, worker_name, args.worker_port, *obs_shape),
+                kwargs={"heartbeat": heartbeat},
                 daemon=True,
             )  # child-processes
-            child_process.append(w)
+            child_process.update({w: heartbeat})
 
         for wp in child_process:
             wp.start()
 
-        for wp in child_process:
-            wp.join()
+        # for wp in child_process:
+        #     wp.join()
 
     except:
         traceback.print_exc(limit=128)
@@ -150,33 +160,37 @@ def worker_sub_process():
 @register
 def learner_sub_process():
     try:
+        _ = set_model_weight(args.model_dir)
+        
         mutex = Mutex()
         queue = mp.Queue(1024)
         stat_queue = mp.Queue(64) #TODO: 좋은 구조는 아님.
-        
+
+        heartbeat = mp.Value('d', time.time())
         s = Process(
             target=storage_run,
             args=(args, mutex, DataFrameKeyword, queue, *obs_shape),
-            kwargs={"stat_queue": stat_queue},
+            kwargs={"stat_queue": stat_queue, "heartbeat": heartbeat},
             daemon=True,
         )  # child-processes
-        child_process.append(s)
+        child_process.update({s: heartbeat})
 
-        # l = Process(
-        #     target=run_learner,
-        #     args=(args, mutex, learner_model, queue),
-        #     kwargs={"stat_queue": stat_queue},
-        #     daemon=True,
-        # )  # child-processes
-        # child_process.append(l)
+        heartbeat = mp.Value('d', time.time())
+        l = Process(
+            target=run_learner,
+            args=(args, mutex, learner_model, queue),
+            kwargs={"stat_queue": stat_queue, "heartbeat": heartbeat},
+            daemon=True,
+        )  # child-processes
+        child_process.update({l: heartbeat})
 
         for lp in child_process:
             lp.start()
 
-        run_learner(args, mutex, learner_model, queue, stat_queue=stat_queue)
+        # run_learner(args, mutex, learner_model, queue, stat_queue=stat_queue)
         
-        for lp in child_process:
-            lp.join()
+        # for lp in child_process:
+        #     lp.join()
 
     except:
         traceback.print_exc(limit=128)
@@ -188,10 +202,32 @@ def learner_sub_process():
         #     lp.terminate()
             
             
-if __name__ == "__main__":    
-    # 자식 프로세스 목록
-    child_process = []
+if __name__ == "__main__":
+    # 자식 프로세스 목록 초기화
+    child_process = {}
         
+    def monitor_child_process(restart_delay=30):
+        global child_process
+        
+        while True:
+            for p, heartbeat in child_process.items():
+                # 자식 프로세스가 죽었거나, 일정 시간 이상 통신이 안된 경우 -> 재시작
+                if not p.is_alive() or ((time.time() - heartbeat.value) > restart_delay):
+
+                    # 모든 자식 프로세스 종료 
+                    for p in child_process:
+                        p.terminate()
+                        p.join()
+                        assert not p.is_alive(), f"p: {p}"
+                        
+                    assert func_name in fn_dict, f"func_name: {func_name}, fn_dict: {fn_dict}"
+                    child_process.clear() # 자식 프로세스 목록 리셋
+                    fn_dict[func_name]() #TODO: 자식 프로세스 중 한 개라도 문제가 있으면 전부다 재시작을 강제. 좋은 방법이 아닐지도..?
+                    
+                    print("All Child Process restarted")
+                    break
+            time.sleep(1)
+                
     assert len(sys.argv) == 2
     func_name = sys.argv[1]
     
@@ -221,6 +257,7 @@ if __name__ == "__main__":
             fn_dict[func_name]()
         else:
             assert False, f"Wronf func_name: {func_name}"
+        monitor_child_process()    
             
     except Exception as e:
         print(f"error: {e}")

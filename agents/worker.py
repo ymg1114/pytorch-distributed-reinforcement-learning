@@ -26,14 +26,15 @@ class Env:
 
 
 class Worker:
-    def __init__(self, args, model, worker_name, port, obs_shape):
+    def __init__(self, args, model, worker_name, port, obs_shape, heartbeat=None):
         self.args = args
         self.device = args.device  # cpu
         self.env = Env(args)
 
         self.model = model
         self.worker_name = worker_name
-
+        self.heartbeat = heartbeat
+        
         self.zeromq_set(port)
 
     def __del__(self): # 소멸자
@@ -123,7 +124,10 @@ class Worker:
                 lstm_hx = lstm_hx_next
 
                 time.sleep(0.05)
-
+                
+                if self.heartbeat is not None:
+                    self.heartbeat.value = time.time()
+                    
                 if done:
                     break
 
