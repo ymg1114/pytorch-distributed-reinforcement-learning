@@ -30,38 +30,40 @@ def register(fn):
     return fn
 
 
-args = Params
-args.device = torch.device(
-    f"cuda:{Params.gpu_idx}" if torch.cuda.is_available() else "cpu"
-)
+def init():
+    args = Params
+    args.device = torch.device(
+        f"cuda:{Params.gpu_idx}" if torch.cuda.is_available() else "cpu"
+    )
 
-# 미리 정해진 경로가 있다면 그것을 사용
-args.result_dir = args.result_dir or result_dir
-args.model_dir = args.model_dir or model_dir
-print(f"device: {args.device}")
+    # 미리 정해진 경로가 있다면 그것을 사용
+    args.result_dir = args.result_dir or result_dir
+    args.model_dir = args.model_dir or model_dir
+    print(f"device: {args.device}")
 
-_model_dir = Path(args.model_dir)
-# 경로가 디렉토리인지 확인
-if not _model_dir.is_dir():
-    # 디렉토리가 아니라면 디렉토리 생성
-    _model_dir.mkdir(parents=True, exist_ok=True)
+    _model_dir = Path(args.model_dir)
+    # 경로가 디렉토리인지 확인
+    if not _model_dir.is_dir():
+        # 디렉토리가 아니라면 디렉토리 생성
+        _model_dir.mkdir(parents=True, exist_ok=True)
 
-# only to get observation, action space
-env = gym.make(args.env)
-# env.seed(0)
-n_outputs = env.action_space.n
-args.action_space = n_outputs
-print("Action Space: ", n_outputs)
-print("Observation Space: ", env.observation_space.shape)
+    # only to get observation, action space
+    env = gym.make(args.env)
+    # env.seed(0)
+    n_outputs = env.action_space.n
+    args.action_space = n_outputs
+    print("Action Space: ", n_outputs)
+    print("Observation Space: ", env.observation_space.shape)
 
-# 현재 openai-gym의 "CartPole-v1" 환경만 한정
-assert not args.need_conv or len(env.observation_space.shape) <= 1
-M = __import__("networks.models", fromlist=[None]).MlpLSTM
-obs_shape = [env.observation_space.shape[0]]
-env.close()
+    # 현재 openai-gym의 "CartPole-v1" 환경만 한정
+    assert not args.need_conv or len(env.observation_space.shape) <= 1
+    M = __import__("networks.models", fromlist=[None]).MlpLSTM
+    obs_shape = [env.observation_space.shape[0]]
+    env.close()
 
-learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
-learner_model.to(args.device)
+    learner_model = M(*obs_shape, n_outputs, args.seq_len, args.hidden_size)
+    learner_model.to(args.device)
+    return args, obs_shape, n_outputs, learner_model, M
 
 
 def set_model_weight(model_dir):
@@ -93,13 +95,13 @@ def worker_run(args, model, worker_name, port, *obs_shape, heartbeat=None):
     worker.collect_rolloutdata()  # collect rollout
     
     
-def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape, stat_queue=None, heartbeat=None):
-    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape, stat_queue, heartbeat)
+def storage_run(args, mutex, dataframe_keyword, queue, *obs_shape, shared_stat_array=None, heartbeat=None):
+    storage = LearnerStorage(args, mutex, dataframe_keyword, queue, obs_shape, shared_stat_array, heartbeat)
     asyncio.run(storage.shared_memory_chain())
 
 
-def run_learner(args, mutex, learner_model, queue, stat_queue=None, heartbeat=None):
-    learner = Learner(args, mutex, learner_model, queue, stat_queue, heartbeat)
+def run_learner(args, mutex, learner_model, queue, shared_stat_array=None, heartbeat=None):
+    learner = Learner(args, mutex, learner_model, queue, shared_stat_array, heartbeat)
     learning_switcher = {
         "PPO": learner.learning_ppo,
         "IMPALA": learner.learning_impala,
@@ -144,8 +146,8 @@ def worker_sub_process():
         for wp in child_process:
             wp.start()
 
-        # for wp in child_process:
-        #     wp.join()
+        for wp in child_process:
+            wp.join()
 
     except:
         traceback.print_exc(limit=128)
@@ -164,13 +166,15 @@ def learner_sub_process():
         
         mutex = Mutex()
         queue = mp.Queue(1024)
-        stat_queue = mp.Queue(64) #TODO: 좋은 구조는 아님.
+        
+        #TODO: 좋은 구조는 아님.
+        shared_stat_array = mp.Array('d', 3) # [global game counts, mean-epi-rew, activate]
 
         heartbeat = mp.Value('d', time.time())
         s = Process(
             target=storage_run,
             args=(args, mutex, DataFrameKeyword, queue, *obs_shape),
-            kwargs={"stat_queue": stat_queue, "heartbeat": heartbeat},
+            kwargs={"shared_stat_array": shared_stat_array, "heartbeat": heartbeat},
             daemon=True,
         )  # child-processes
         child_process.update({s: heartbeat})
@@ -179,7 +183,7 @@ def learner_sub_process():
         l = Process(
             target=run_learner,
             args=(args, mutex, learner_model, queue),
-            kwargs={"stat_queue": stat_queue, "heartbeat": heartbeat},
+            kwargs={"shared_stat_array": shared_stat_array, "heartbeat": heartbeat},
             daemon=True,
         )  # child-processes
         child_process.update({l: heartbeat})
@@ -187,10 +191,10 @@ def learner_sub_process():
         for lp in child_process:
             lp.start()
 
-        # run_learner(args, mutex, learner_model, queue, stat_queue=stat_queue)
+        # run_learner(args, mutex, learner_model, queue, shared_stat_array=shared_stat_array)
         
-        # for lp in child_process:
-        #     lp.join()
+        for lp in child_process:
+            lp.join()
 
     except:
         traceback.print_exc(limit=128)
@@ -203,10 +207,16 @@ def learner_sub_process():
             
             
 if __name__ == "__main__":
+    args, obs_shape, n_outputs, learner_model, M = init()
+    
     # 자식 프로세스 목록 초기화
     child_process = {}
         
-    def monitor_child_process(restart_delay=30):
+    def monitor_child_process(restart_delay=20):
+        """TODO: 정상 작동하지 않는 듯.. 
+        텐서보드 기록에 버그를 일으킴.
+        일단 사용하지 않음."""
+        
         global child_process
         
         while True:
@@ -257,7 +267,7 @@ if __name__ == "__main__":
             fn_dict[func_name]()
         else:
             assert False, f"Wronf func_name: {func_name}"
-        monitor_child_process()    
+        # monitor_child_process()
             
     except Exception as e:
         print(f"error: {e}")

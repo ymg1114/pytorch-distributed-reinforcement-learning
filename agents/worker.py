@@ -74,9 +74,7 @@ class Worker:
             pass
 
     def pub_stat(self):
-        stat = {}
-        stat.update({"epi_rew": self.epi_rew})
-        self.pub_socket.send_multipart([*encode(Protocol.Stat, stat)])
+        self.pub_socket.send_multipart([*encode(Protocol.Stat, self.epi_rew)])
         print(f"worker_name: {self.worker_name} epi_rew: {self.epi_rew} pub stat to manager!")
 
     def collect_rolloutdata(self):

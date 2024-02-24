@@ -18,7 +18,7 @@ from buffers.manager import Manager
 from utils.utils import KillProcesses, SaveErrorLog, Params, result_dir, model_dir, DataFrameKeyword
 from utils.lock import Mutex
 
-"""주의) 코드 최신화 진행되지 않아 사용할 수 없음.
+"""주의) 코드 최신화가 진행되지 않아 더 이상 사용할 수 없음.
 """
 
 

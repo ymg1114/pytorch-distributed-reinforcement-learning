@@ -1,4 +1,4 @@
-import os
+import os, sys
 import cv2
 import json
 import torch
@@ -18,7 +18,7 @@ from pathlib import Path
 from datetime import datetime
 from signal import SIGTERM  # or SIGKILL
 from types import SimpleNamespace
-from tensorboardX import SummaryWriter
+
 
 utils = os.path.join(os.getcwd(), "utils", "parameters.json")
 with open(utils) as f:
@@ -50,8 +50,6 @@ class MetaclassSingleton(type):
 dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
 result_dir = os.path.join("results", str(dt_string))
 model_dir = os.path.join(result_dir, "models")
-
-writer = SummaryWriter(log_dir=result_dir)  # tensorboard-log
 
 
 LS_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.

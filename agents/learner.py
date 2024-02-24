@@ -1,16 +1,16 @@
 import os
 import zmq
 import time
-import queue
 import torch
 import torch.nn.functional as F
 import multiprocessing as mp
+import numpy as np
 
 from torch.distributions import Categorical
 from functools import partial
 
 from utils.lock import Mutex
-from utils.utils import Protocol, encode, make_gpu_batch, writer, L_IP, ExecutionTimer, Params
+from utils.utils import Protocol, encode, make_gpu_batch, L_IP, ExecutionTimer, Params
 from torch.optim import Adam, RMSprop
 
 
@@ -22,14 +22,6 @@ def compute_gae(
     gamma,
     lambda_,
 ):
-    """
-    Compute GAE.
-
-    delta: TD-errors, shape of (batch, seq, dim)
-    gamma: Discount factor.
-    lambda_: GAE lambda parameter.
-    """
-
     gae = 0
     returns = []
     for step in reversed(range(delta.shape[1])):
@@ -57,7 +49,7 @@ def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, 
     deltas = rho_clipped * (td_target - values[:, :-1]) # TD-Error with 보정
     vs_minus_v_xs = torch.zeros_like(values)
     for t in reversed(range(deltas.size(1))):
-        vs_minus_v_xs[:, t] = deltas[:, t] + (gamma * (1 - is_fir))[:, t + 1] * c_clipped[:, t] * vs_minus_v_xs[:, t + 1]
+        vs_minus_v_xs[:, t] = deltas[:, t] + c_clipped[:, t] * (gamma * (1 - is_fir))[:, t + 1] * vs_minus_v_xs[:, t + 1]
     
     values_target = values + vs_minus_v_xs # vs_minus_v_xs는 V-trace를 통해 수정된 가치 추정치
     advantages = rho_clipped * (rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * values_target[:, 1:] - values[:, :-1])
@@ -66,11 +58,14 @@ def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, 
 
 
 class Learner:
-    def __init__(self, args, mutex, model, queue, stat_queue=None, heartbeat=None):
+    def __init__(self, args, mutex, model, queue, shared_stat_array=None, heartbeat=None):
         self.args = args
         self.mutex: Mutex = mutex
         self.batch_queue = queue
-        self.stat_queue = stat_queue
+        
+        if shared_stat_array is not None:
+            self.np_shared_stat_array: np.ndarray = np.frombuffer(buffer=shared_stat_array.get_obj(), dtype=np.float64, count=-1)
+            
         self.heartbeat = heartbeat
         
         self.device = self.args.device
@@ -82,9 +77,9 @@ class Learner:
 
         self.to_gpu = partial(make_gpu_batch, device=self.device)
 
-        self.stat_list = []
         self.zeromq_set()
-        self.writer = writer
+        from tensorboardX import SummaryWriter     
+        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log   
         
     def __del__(self): # 소멸자
         self.pub_socket.close()
@@ -121,22 +116,18 @@ class Learner:
             "avg-ratio", detached_losses["ratio"].mean(), self.idx
         )      
         
-        if self.stat_queue is not None and isinstance(self.stat_queue, mp.queues.Queue):
-            try:
-                stat_dict = self.stat_queue.get_nowait()
-                assert "tag" in stat_dict
-                assert "x" in stat_dict
-                assert "y" in stat_dict
-                
-                #TODO: 좋은 형태의 구조는 아님. LearnerStorage 쓰루풋을 텐서보드에 기록하기 위함.
-                x = self.idx if "learner-storage-throughput" in stat_dict["tag"] else stat_dict["x"]
-                self.writer.add_scalar(stat_dict["tag"], stat_dict["y"], x)
-                
-            except queue.Empty:
-                # 큐가 비어있음을 처리
-                #TODO: 좋은 형태의 구조는 아님
-                print("stat_queue is empty.")
+        #TODO: 좋은 형태의 구조는 아님
+        if self.np_shared_stat_array is not None:
+            assert self.np_shared_stat_array.size == 3
+            if bool(self.np_shared_stat_array[2]) is True: # 기록 가능 활성화 (activate)
 
+                x = self.np_shared_stat_array[0] # global game counts
+                y = self.np_shared_stat_array[1] # mean-epi-rew
+                
+                self.writer.add_scalar("50-game-mean-stat-of-epi-rew", y, x)
+
+                self.np_shared_stat_array[2] = 0  # 기록 가능 비활성화 (deactivate)
+                    
         if timer is not None and isinstance(timer, ExecutionTimer):
             for k, v in timer.timer_dict.items():
                 self.writer.add_scalar(

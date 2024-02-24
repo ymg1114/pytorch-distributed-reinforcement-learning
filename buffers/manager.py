@@ -14,9 +14,10 @@ class Manager:
         self.obs_shape = obs_shape
 
         self.data_q = deque(maxlen=1024)
+        
+        self.stat_publish_cycle = 50
+        self.stat_q = deque(maxlen=self.stat_publish_cycle)
 
-        self.stat_list = []
-        self.stat_log_len = 10
         self.zeromq_set(worker_port)
 
     def __del__(self): # 소멸자
@@ -35,20 +36,6 @@ class Manager:
         self.pub_socket = context.socket(zmq.PUB)  # publish batch-data, stat-data
         self.pub_socket.connect(f"tcp://{M_IP}:{self.args.learner_port}")
 
-    @staticmethod
-    def process_stat(stat_list):
-        mean_stat = {}
-        for stat_dict in stat_list:
-            for k, v in stat_dict.items():
-                if isinstance(v, (int, float, np.number)):
-                    if not k in mean_stat:
-                        mean_stat[k] = [v]
-                    else:
-                        mean_stat[k].append(v)
-
-        mean_stat = {k: np.mean(v) for k, v in mean_stat.items()}
-        return mean_stat
-
     async def sub_data(self):
         while True:
             protocol, data = decode(*await self.sub_socket.recv_multipart())
@@ -59,6 +46,8 @@ class Manager:
             await asyncio.sleep(0.001)
 
     async def pub_data(self):
+        stat_pub_num = 0 # 지역 변수
+        
         while True:
             if len(self.data_q) > 0:
                 protocol, data = self.data_q.popleft()  # FIFO
@@ -68,21 +57,21 @@ class Manager:
                     )
 
                 elif protocol is Protocol.Stat:
-                    self.stat_list.append(data)
-                    if len(self.stat_list) >= self.stat_log_len:
-                        mean_stat = Manager.process_stat(self.stat_list)
+                    self.stat_q.append(data)
+                    if stat_pub_num >= self.stat_publish_cycle and len(self.stat_q) > 0:
                         await self.pub_socket.send_multipart(
                             [
                                 *encode(
                                     Protocol.Stat,
                                     {
-                                        "log_len": len(self.stat_list),
-                                        "mean_stat": mean_stat,
+                                        "log_len": len(self.stat_q),
+                                        "mean_stat": np.mean([self.stat_q]), # mean epi_reward
                                     },
                                 )
                             ]
                         )
-                        self.stat_list = []
+                        stat_pub_num = 0     
+                    stat_pub_num += 1
                 else:
                     assert False, f"Wrong protocol: {protocol}"
 
