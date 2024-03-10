@@ -14,7 +14,9 @@ from utils.utils import Protocol, encode, make_gpu_batch, L_IP, ExecutionTimer, 
 from torch.optim import Adam, RMSprop
 
 
-timer = ExecutionTimer(num_transition=Params.seq_len*Params.batch_size*1) # Learner에서 데이터 처리량 (학습)
+timer = ExecutionTimer(
+    num_transition=Params.seq_len * Params.batch_size * 1
+)  # Learner에서 데이터 처리량 (학습)
 
 
 def compute_gae(
@@ -32,42 +34,68 @@ def compute_gae(
     return torch.stack(returns, dim=1)
 
 
-def compute_v_trace(behav_log_probs, target_log_probs, is_fir, rewards, values, gamma, rho_bar=0.8, c_bar=1.0):
+def compute_v_trace(
+    behav_log_probs,
+    target_log_probs,
+    is_fir,
+    rewards,
+    values,
+    gamma,
+    rho_bar=0.8,
+    c_bar=1.0,
+):
     # Importance sampling weights (rho)
-    rho = torch.exp(target_log_probs[:, :-1] - behav_log_probs[:, :-1]).detach() # a/b == exp(log(a)-log(b))
+    rho = torch.exp(
+        target_log_probs[:, :-1] - behav_log_probs[:, :-1]
+    ).detach()  # a/b == exp(log(a)-log(b))
     # rho_clipped = torch.clamp(rho, max=rho_bar)
     rho_clipped = torch.clamp(rho, min=0.1, max=rho_bar)
-    
+
     # truncated importance weights (c)
-    c = torch.exp(target_log_probs[:, :-1] - behav_log_probs[:, :-1]).detach() # a/b == exp(log(a)-log(b))
+    c = torch.exp(
+        target_log_probs[:, :-1] - behav_log_probs[:, :-1]
+    ).detach()  # a/b == exp(log(a)-log(b))
     c_clipped = torch.clamp(c, max=c_bar)
 
-    td_target = (
-        rewards[:, :-1]
-        + gamma * (1 - is_fir[:, 1:]) * values[:, 1:]
-    )    
-    deltas = rho_clipped * (td_target - values[:, :-1]) # TD-Error with 보정
+    td_target = rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * values[:, 1:]
+    deltas = rho_clipped * (td_target - values[:, :-1])  # TD-Error with 보정
+
     vs_minus_v_xs = torch.zeros_like(values)
     for t in reversed(range(deltas.size(1))):
-        vs_minus_v_xs[:, t] = deltas[:, t] + c_clipped[:, t] * (gamma * (1 - is_fir))[:, t + 1] * vs_minus_v_xs[:, t + 1]
-    
-    values_target = values + vs_minus_v_xs # vs_minus_v_xs는 V-trace를 통해 수정된 가치 추정치
-    advantages = rho_clipped * (rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * values_target[:, 1:] - values[:, :-1])
-    
+        vs_minus_v_xs[:, t] = (
+            deltas[:, t]
+            + c_clipped[:, t]
+            * (gamma * (1 - is_fir))[:, t + 1]
+            * vs_minus_v_xs[:, t + 1]
+        )
+
+    values_target = (
+        values + vs_minus_v_xs
+    )  # vs_minus_v_xs는 V-trace를 통해 수정된 가치 추정치
+    advantages = rho_clipped * (
+        rewards[:, :-1]
+        + gamma * (1 - is_fir[:, 1:]) * values_target[:, 1:]
+        - values[:, :-1]
+    )
+
     return rho_clipped, advantages.detach(), values_target.detach()
 
 
 class Learner:
-    def __init__(self, args, mutex, model, queue, shared_stat_array=None, heartbeat=None):
+    def __init__(
+        self, args, mutex, model, queue, shared_stat_array=None, heartbeat=None
+    ):
         self.args = args
         self.mutex: Mutex = mutex
         self.batch_queue = queue
-        
+
         if shared_stat_array is not None:
-            self.np_shared_stat_array: np.ndarray = np.frombuffer(buffer=shared_stat_array.get_obj(), dtype=np.float64, count=-1)
-            
+            self.np_shared_stat_array: np.ndarray = np.frombuffer(
+                buffer=shared_stat_array.get_obj(), dtype=np.float64, count=-1
+            )
+
         self.heartbeat = heartbeat
-        
+
         self.device = self.args.device
         self.model = model.to(self.device)
 
@@ -78,10 +106,11 @@ class Learner:
         self.to_gpu = partial(make_gpu_batch, device=self.device)
 
         self.zeromq_set()
-        from tensorboardX import SummaryWriter     
-        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log   
-        
-    def __del__(self): # 소멸자
+        from tensorboardX import SummaryWriter
+
+        self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
+
+    def __del__(self):  # 소멸자
         self.pub_socket.close()
 
     def zeromq_set(self):
@@ -92,9 +121,9 @@ class Learner:
             f"tcp://{L_IP}:{self.args.learner_port+1}"
         )  # publish fresh learner-model
 
-    def pub_model(self, model_state_dict): # learner -> worker
+    def pub_model(self, model_state_dict):  # learner -> worker
         self.pub_socket.send_multipart([*encode(Protocol.Model, model_state_dict)])
-            
+
     def log_loss_tensorboard(self, timer, loss, detached_losses):
         self.writer.add_scalar("total-loss", float(loss.item()), self.idx)
         self.writer.add_scalar(
@@ -106,28 +135,24 @@ class Learner:
         self.writer.add_scalar(
             "original-policy-entropy", detached_losses["policy-entropy"], self.idx
         )
-        self.writer.add_scalar(
-            "min-ratio", detached_losses["ratio"].min(), self.idx
-        )
-        self.writer.add_scalar(
-            "max-ratio", detached_losses["ratio"].max(), self.idx
-        )
-        self.writer.add_scalar(
-            "avg-ratio", detached_losses["ratio"].mean(), self.idx
-        )      
-        
-        #TODO: 좋은 형태의 구조는 아님
+        self.writer.add_scalar("min-ratio", detached_losses["ratio"].min(), self.idx)
+        self.writer.add_scalar("max-ratio", detached_losses["ratio"].max(), self.idx)
+        self.writer.add_scalar("avg-ratio", detached_losses["ratio"].mean(), self.idx)
+
+        # TODO: 좋은 형태의 구조는 아님
         if self.np_shared_stat_array is not None:
             assert self.np_shared_stat_array.size == 3
-            if bool(self.np_shared_stat_array[2]) is True: # 기록 가능 활성화 (activate)
+            if (
+                bool(self.np_shared_stat_array[2]) is True
+            ):  # 기록 가능 활성화 (activate)
 
-                x = self.np_shared_stat_array[0] # global game counts
-                y = self.np_shared_stat_array[1] # mean-epi-rew
-                
+                x = self.np_shared_stat_array[0]  # global game counts
+                y = self.np_shared_stat_array[1]  # mean-epi-rew
+
                 self.writer.add_scalar("50-game-mean-stat-of-epi-rew", y, x)
 
                 self.np_shared_stat_array[2] = 0  # 기록 가능 비활성화 (deactivate)
-                    
+
         if timer is not None and isinstance(timer, ExecutionTimer):
             for k, v in timer.timer_dict.items():
                 self.writer.add_scalar(
@@ -137,7 +162,7 @@ class Learner:
                 self.writer.add_scalar(
                     f"{k}-transition-per-secs", sum(v) / (len(v) + 1e-6), self.idx
                 )
-                        
+
     # PPO
     def learning_ppo(self):
         self.idx = 0
@@ -149,7 +174,7 @@ class Learner:
                     batch_args = self.batch_queue.get()
                     # batch_args = self.mutex.get(self.batch_queue)
                     # batch_args = self.mutex.get_with_timeout(self.batch_queue)
-                    
+
                 if batch_args is not None:
                     with timer.timer("learner-forward-time"):
                         # Basically, mini-batch-learning (batch, seq, feat)
@@ -184,15 +209,17 @@ class Learner:
                             gae = compute_gae(
                                 delta, self.args.gamma, self.args.lmbda
                             )  # ppo-gae (advantage)
-                            
+
                             ratio = torch.exp(
                                 log_probs[:, :-1] - behav_log_probs[:, :-1]
                             )  # a/b == exp(log(a)-log(b))
-                                                
+
                             surr1 = ratio * gae
                             surr2 = (
                                 torch.clamp(
-                                    ratio, 1 - self.args.eps_clip, 1 + self.args.eps_clip
+                                    ratio,
+                                    1 - self.args.eps_clip,
+                                    1 + self.args.eps_clip,
                                 )
                                 * gae
                             )
@@ -215,7 +242,7 @@ class Learner:
                                 "policy-entropy": policy_entropy.detach().cpu(),
                                 "ratio": ratio.detach().cpu(),
                             }
-                            
+
                     with timer.timer("learner-backward-time"):
                         self.optimizer.zero_grad()
                         loss.backward()
@@ -235,19 +262,22 @@ class Learner:
 
                     self.pub_model(self.model.state_dict())
 
-                    if (self.idx % self.args.loss_log_interval == 0):
+                    if self.idx % self.args.loss_log_interval == 0:
                         self.log_loss_tensorboard(timer, loss, detached_losses)
-                        
+
                     if self.idx % self.args.model_save_interval == 0:
                         torch.save(
                             self.model,
-                            os.path.join(self.args.model_dir, f"{self.args.algo}_{self.idx}.pt"),
+                            os.path.join(
+                                self.args.model_dir, f"{self.args.algo}_{self.idx}.pt"
+                            ),
                         )
 
                     self.idx += 1
-                    
+
                 if self.heartbeat is not None:
                     self.heartbeat.value = time.time()
+
     # IMPALA
     def learning_impala(self):
         self.idx = 0
@@ -259,7 +289,7 @@ class Learner:
                     batch_args = self.batch_queue.get()
                     # batch_args = self.mutex.get(self.batch_queue)
                     # batch_args = self.mutex.get_with_timeout(self.batch_queue)
-                    
+
                 if batch_args is not None:
                     with timer.timer("learner-forward-time"):
                         # Basically, mini-batch-learning (batch, seq, feat)
@@ -283,19 +313,21 @@ class Learner:
                                 lstm_states,  # ((batch, hidden), (batch, hidden))
                                 act,  # (batch, seq, 1)
                             )
-                            
+
                             # V-trace를 사용하여 off-policy corrections 연산
                             ratio, advantages, values_target = compute_v_trace(
-                                behav_log_probs=behav_log_probs, 
+                                behav_log_probs=behav_log_probs,
                                 target_log_probs=log_probs,
                                 is_fir=is_fir,
                                 rewards=rew,
-                                values=value, 
+                                values=value,
                                 gamma=self.args.gamma,
-                                )
-                            
+                            )
+
                             loss_policy = -(log_probs[:, :-1] * advantages).mean()
-                            loss_value = F.smooth_l1_loss(value[:, :-1], values_target[:, :-1]).mean()
+                            loss_value = F.smooth_l1_loss(
+                                value[:, :-1], values_target[:, :-1]
+                            ).mean()
                             policy_entropy = entropy[:, :-1].mean()
 
                             loss = (
@@ -330,16 +362,18 @@ class Learner:
 
                     self.pub_model(self.model.state_dict())
 
-                    if (self.idx % self.args.loss_log_interval == 0):
+                    if self.idx % self.args.loss_log_interval == 0:
                         self.log_loss_tensorboard(timer, loss, detached_losses)
-                        
+
                     if self.idx % self.args.model_save_interval == 0:
                         torch.save(
                             self.model,
-                            os.path.join(self.args.model_dir, f"{self.args.algo}_{self.idx}.pt"),
+                            os.path.join(
+                                self.args.model_dir, f"{self.args.algo}_{self.idx}.pt"
+                            ),
                         )
 
                     self.idx += 1
 
                 if self.heartbeat is not None:
-                    self.heartbeat.value = time.time()                   
+                    self.heartbeat.value = time.time()

@@ -14,13 +14,13 @@ class Manager:
         self.obs_shape = obs_shape
 
         self.data_q = deque(maxlen=1024)
-        
+
         self.stat_publish_cycle = 50
         self.stat_q = deque(maxlen=self.stat_publish_cycle)
 
         self.zeromq_set(worker_port)
 
-    def __del__(self): # 소멸자
+    def __del__(self):  # 소멸자
         self.sub_socket.close()
         self.pub_socket.close()
 
@@ -46,8 +46,8 @@ class Manager:
             await asyncio.sleep(0.001)
 
     async def pub_data(self):
-        stat_pub_num = 0 # 지역 변수
-        
+        stat_pub_num = 0  # 지역 변수
+
         while True:
             if len(self.data_q) > 0:
                 protocol, data = self.data_q.popleft()  # FIFO
@@ -65,12 +65,14 @@ class Manager:
                                     Protocol.Stat,
                                     {
                                         "log_len": len(self.stat_q),
-                                        "mean_stat": np.mean([self.stat_q]), # mean epi_reward
+                                        "mean_stat": np.mean(
+                                            [self.stat_q]
+                                        ),  # mean epi_reward
                                     },
                                 )
                             ]
                         )
-                        stat_pub_num = 0     
+                        stat_pub_num = 0
                     stat_pub_num += 1
                 else:
                     assert False, f"Wrong protocol: {protocol}"

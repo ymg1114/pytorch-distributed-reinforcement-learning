@@ -20,7 +20,7 @@ class Trajectory:
 class Trajectory2:
     def __init__(self, seq_len, time_gen):
         self.seq_len = seq_len
-        self.time_gen = time_gen # 트레적터리 최초 생성 시간
+        self.time_gen = time_gen  # 트레적터리 최초 생성 시간
         self.data = list()
 
     @property

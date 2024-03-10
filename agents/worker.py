@@ -1,4 +1,5 @@
 import os, sys
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import uuid
@@ -34,10 +35,10 @@ class Worker:
         self.model = model
         self.worker_name = worker_name
         self.heartbeat = heartbeat
-        
+
         self.zeromq_set(port)
 
-    def __del__(self): # 소멸자
+    def __del__(self):  # 소멸자
         self.pub_socket.close()
         self.sub_socket.close()
 
@@ -75,7 +76,9 @@ class Worker:
 
     def pub_stat(self):
         self.pub_socket.send_multipart([*encode(Protocol.Stat, self.epi_rew)])
-        print(f"worker_name: {self.worker_name} epi_rew: {self.epi_rew} pub stat to manager!")
+        print(
+            f"worker_name: {self.worker_name} epi_rew: {self.epi_rew} pub stat to manager!"
+        )
 
     def collect_rolloutdata(self):
         print("Build Environment for {}".format(self.worker_name))
@@ -84,8 +87,8 @@ class Worker:
         while True:
             obs = self.env.reset()
             # _id = uuid.uuid4().int
-            _id = str(uuid.uuid4()) # 고유한 난수 생성
-            
+            _id = str(uuid.uuid4())  # 고유한 난수 생성
+
             # print(f"worker_name: {self.worker_name}, obs: {obs}")
             lstm_hx = (
                 torch.zeros(self.args.hidden_size),
@@ -122,10 +125,10 @@ class Worker:
                 lstm_hx = lstm_hx_next
 
                 time.sleep(0.05)
-                
+
                 if self.heartbeat is not None:
                     self.heartbeat.value = time.time()
-                    
+
                 if done:
                     break
 

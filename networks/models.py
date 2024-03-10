@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from torch.distributions import Categorical
 
+
 class MlpLSTM(nn.Module):
     def __init__(self, f, n_outputs, sequence_length, hidden_size):
         super(MlpLSTM, self).__init__()
@@ -11,20 +12,20 @@ class MlpLSTM(nn.Module):
         self.n_outputs = n_outputs
         self.sequence_length = sequence_length
         self.hidden_size = hidden_size
-        
+
         self.body = nn.Sequential(
             nn.Linear(in_features=self.input_size, out_features=self.hidden_size),
-            nn.ReLU(),            
+            nn.ReLU(),
         )
         self.after_torso()
-        
+
         self.CT = Categorical
-        
+
     def after_torso(self):
         self.lstmcell = nn.LSTMCell(
             input_size=self.hidden_size, hidden_size=self.hidden_size
         )
-        
+
         # value
         self.value = nn.Linear(in_features=self.hidden_size, out_features=1)
 
@@ -36,8 +37,8 @@ class MlpLSTM(nn.Module):
     def act(self, obs, lstm_hxs):
         x = self.body.forward(obs)  # x: (feat,)
         hx, cx = self.lstmcell(x, lstm_hxs)
-        
-        logits = self.logits(hx) # policy
+
+        logits = self.logits(hx)  # policy
         dist = self.get_dist(logits)
 
         return dist.sample().detach(), dist.logits.detach(), (hx.detach(), cx.detach())
@@ -72,8 +73,8 @@ class MlpLSTM(nn.Module):
         return log_probs, entropy, value
 
     def _forward_dist(self, logits, behaviour_acts):
-        dist = self.get_dist(logits) # (batch, seq, num_acts)
-        
+        dist = self.get_dist(logits)  # (batch, seq, num_acts)
+
         log_probs = dist.log_prob(behaviour_acts.squeeze(-1))  # (batch, seq)
         entropy = dist.entropy()  # (batch, seq)
 

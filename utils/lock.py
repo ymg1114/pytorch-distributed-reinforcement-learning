@@ -54,9 +54,9 @@ class Mutex:
                 data = q.get(timeout=timeout)  # timeout초 동안 대기
             except queue.Empty:
                 data = None
-                print(f"Queue is empty after waiting for {timeout} seconds")                
+                print(f"Queue is empty after waiting for {timeout} seconds")
         return data
-    
+
     def put(self, q: mp.Queue, data):
         with self.lock():
             q.put(data)

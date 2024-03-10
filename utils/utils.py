@@ -8,6 +8,7 @@ import psutil
 import pickle
 import blosc2
 import numpy as np
+
 # import torchvision.transforms as T
 
 from collections import deque, defaultdict
@@ -26,7 +27,7 @@ with open(utils) as f:
     Params = SimpleNamespace(**_p)
 
 
-#TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
+# TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
 DataFrameKeyword = [
     "obs_batch",
     "act_batch",
@@ -41,9 +42,10 @@ DataFrameKeyword = [
 
 class MetaclassSingleton(type):
     _instance = {}
-    def __call__(cls,*args,**kwargs):
+
+    def __call__(cls, *args, **kwargs):
         if cls not in cls._instance:
-            cls._instance[cls] = super(MetaclassSingleton, cls).__call__(*args,*kwargs)
+            cls._instance[cls] = super(MetaclassSingleton, cls).__call__(*args, *kwargs)
         return cls._instance[cls]
 
 
@@ -52,10 +54,10 @@ result_dir = os.path.join("results", str(dt_string))
 model_dir = os.path.join(result_dir, "models")
 
 
-LS_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
-L_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
-W_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
-M_IP = "127.0.0.1" # 동일 서브넷 다른 머신 사용 가능.
+LS_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
+L_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
+W_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
+M_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
 
 
 flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float64)
@@ -65,12 +67,12 @@ to_torch = lambda nparray: torch.from_numpy(nparray).type(torch.float32)
 
 
 def extract_file_num(filename):
-    parts = filename.stem.split('_')
+    parts = filename.stem.split("_")
     try:
         return int(parts[-1])
     except ValueError:
         return -1
-    
+
 
 def make_gpu_batch(*args, device):
     to_gpu = lambda tensor: tensor.to(device)
@@ -89,8 +91,8 @@ def get_process_id(name):
 
 def kill_process(pid):
     os.kill(pid, SIGTERM)
-    
-    
+
+
 class KillSubProcesses:
     def __init__(self, processes):
         self.target_processes = processes
@@ -105,8 +107,8 @@ class KillSubProcesses:
 
             elif self.os_system == "Linux":
                 print("This is a Linux operating system.")
-                os.kill(p.pid, SIGTERM)    
-    
+                os.kill(p.pid, SIGTERM)
+
 
 def mul(shape_dim):
     _val = 1
@@ -129,7 +131,7 @@ class ExecutionTimer:
         self.num_transition = num_transition
         self.timer_dict = defaultdict(lambda: deque(maxlen=threshold))
         self.throughput_dict = defaultdict(lambda: deque(maxlen=threshold))
-        
+
     @contextmanager
     def timer(self, code_block_name: str, check_throughput=False):
         start_time = time.time()
@@ -138,12 +140,16 @@ class ExecutionTimer:
 
         elapsed_time = end_time - start_time
 
-        self.timer_dict[code_block_name].append(elapsed_time) # sec
-        if self.num_transition is not None and isinstance(self.num_transition, (int, float, np.number)):
+        self.timer_dict[code_block_name].append(elapsed_time)  # sec
+        if self.num_transition is not None and isinstance(
+            self.num_transition, (int, float, np.number)
+        ):
             if check_throughput is True:
-                self.throughput_dict[code_block_name].append(self.num_transition / (elapsed_time+1e-6)) # transition/sec
+                self.throughput_dict[code_block_name].append(
+                    self.num_transition / (elapsed_time + 1e-6)
+                )  # transition/sec
         # avg_time = sum(self.exec_times) / len(self.exec_times)
-        
+
 
 def SaveErrorLog(error: str, log_dir: str):
     current_time = time.strftime("[%Y_%m_%d][%H_%M_%S]", time.localtime(time.time()))

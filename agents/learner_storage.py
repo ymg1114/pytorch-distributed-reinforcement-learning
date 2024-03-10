@@ -8,31 +8,52 @@ import multiprocessing as mp
 
 from buffers.rollout_assembler import RolloutAssembler
 from utils.lock import Mutex
-from utils.utils import Protocol, mul, decode, flatten, to_torch, counted, LS_IP, ExecutionTimer, Params
+from utils.utils import (
+    Protocol,
+    mul,
+    decode,
+    flatten,
+    to_torch,
+    counted,
+    LS_IP,
+    ExecutionTimer,
+    Params,
+)
 
 
 # timer = ExecutionTimer(num_transition=Params.seq_len*1) # LearnerStorage에서 데이터 처리량 (수신) / 부정확한 값이지만 어쩔 수 없음
 
 
 class LearnerStorage:
-    def __init__(self, args, mutex, dataframe_keyword, queue, obs_shape, shared_stat_array=None, heartbeat=None):
+    def __init__(
+        self,
+        args,
+        mutex,
+        dataframe_keyword,
+        queue,
+        obs_shape,
+        shared_stat_array=None,
+        heartbeat=None,
+    ):
         self.args = args
         self.dataframe_keyword = dataframe_keyword
         self.obs_shape = obs_shape
-        
+
         self.mutex: Mutex = mutex
         self._init = False
 
         self.batch_queue = queue
         if shared_stat_array is not None:
-            self.np_shared_stat_array: np.ndarray = np.frombuffer(buffer=shared_stat_array.get_obj(), dtype=np.float64, count=-1)
-            
+            self.np_shared_stat_array: np.ndarray = np.frombuffer(
+                buffer=shared_stat_array.get_obj(), dtype=np.float64, count=-1
+            )
+
         self.heartbeat = heartbeat
 
         self.zeromq_set()
         self.reset_shared_memory()
 
-    def __del__(self): # 소멸자
+    def __del__(self):  # 소멸자
         self.sub_socket.close()
 
     # def __del__(self):
@@ -119,13 +140,11 @@ class LearnerStorage:
 
     @staticmethod
     def set_shared_memory(self, np_array, name):
-        """멀티프로세싱 환경에서 데이터 복사 없이 공유 메모리를 통해 데이터를 공유함으로써 성능을 개선할 수 있음."""        
-        
+        """멀티프로세싱 환경에서 데이터 복사 없이 공유 메모리를 통해 데이터를 공유함으로써 성능을 개선할 수 있음."""
+
         assert name in self.dataframe_keyword
 
-        shm_array = mp.Array(
-            "d", len(np_array)
-        )
+        shm_array = mp.Array("d", len(np_array))
 
         return np.frombuffer(buffer=shm_array.get_obj(), dtype=np_array.dtype, count=-1)
 
@@ -149,7 +168,7 @@ class LearnerStorage:
             if protocol is Protocol.Rollout:
                 await self.rollout_assembler.push(data)
 
-            elif protocol is Protocol.Stat:        
+            elif protocol is Protocol.Stat:
                 self.log_stat_tensorboard(
                     {"log_len": data["log_len"], "mean_stat": data["mean_stat"]}
                 )
@@ -164,21 +183,21 @@ class LearnerStorage:
             data = await self.rollout_assembler.pop()
             self.make_batch(data)
             print("rollout is poped !")
-                
+
             await asyncio.sleep(0.001)
 
     async def put_batch_to_batch_q(self):
         while True:
             if self.heartbeat is not None:
                 self.heartbeat.value = time.time()
-                       
+
             if self.is_sh_ready():
                 batch_args = self.get_batch_from_sh_memory()
                 # self.mutex.put(self.batch_queue, batch_args)
                 self.batch_queue.put(batch_args)
                 self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
                 print("batch is ready !")
-                
+
             await asyncio.sleep(0.001)
 
     @counted
@@ -195,10 +214,10 @@ class LearnerStorage:
         # TODO: 좋은 구조는 아님
         if self.np_shared_stat_array is not None:
             assert self.np_shared_stat_array.size == 3
-            
-            self.np_shared_stat_array[0] = x # global game counts
-            self.np_shared_stat_array[1] = y # mean-epi-rew
-            self.np_shared_stat_array[2] = 1 # 기록 가능 활성화 (activate)
+
+            self.np_shared_stat_array[0] = x  # global game counts
+            self.np_shared_stat_array[1] = y  # mean-epi-rew
+            self.np_shared_stat_array[2] = 1  # 기록 가능 활성화 (activate)
 
     def make_batch(self, rollout):
         sq = self.args.seq_len
@@ -238,7 +257,9 @@ class LearnerStorage:
     @staticmethod
     def copy_to_ndarray(src):
         dst = np.empty(src.shape, dtype=src.dtype)
-        np.copyto(dst, src)  # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
+        np.copyto(
+            dst, src
+        )  # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
         return dst
 
     def get_batch_from_sh_memory(self):
