@@ -32,7 +32,7 @@ class Worker:
         self.device = args.device  # cpu
         self.env = Env(args)
 
-        self.model = model
+        self.model = model.to(torch.device("cpu"))
         self.worker_name = worker_name
         self.heartbeat = heartbeat
 
