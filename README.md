@@ -1,4 +1,4 @@
-# pytorch-distributed-ppo-impala
+# pytorch-distributed-reinforcement-learning
 ## Algo
 PPO
 
