@@ -21,3 +21,5 @@ results/
 .vscode/
 *.pyc
 *.pyo
+
+logs/*
