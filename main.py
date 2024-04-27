@@ -138,6 +138,7 @@ class Runner:
         learning_switcher = {
             "PPO": learner.learning_ppo,
             "IMPALA": learner.learning_impala,
+            "SAC": learner.learning_sac,  # TODO
         }
         learning = learning_switcher.get(
             args.algo, lambda: AssertionError("Should be PPO or IMPALA")
