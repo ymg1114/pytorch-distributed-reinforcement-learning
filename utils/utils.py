@@ -58,15 +58,6 @@ DataFrameKeyword = [
 ]
 
 
-class MetaclassSingleton(type):
-    _instance = {}
-
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instance:
-            cls._instance[cls] = super(MetaclassSingleton, cls).__call__(*args, *kwargs)
-        return cls._instance[cls]
-
-
 dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
 result_dir = os.path.join("results", str(dt_string))
 model_dir = os.path.join(result_dir, "models")
