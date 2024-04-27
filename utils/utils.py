@@ -27,6 +27,24 @@ with open(utils) as f:
     Params = SimpleNamespace(**_p)
 
 
+class SingletonMetaCls(type):
+    __instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls.__instances:
+            cls.__instances[cls] = super().__call__(*args, **kwargs)
+        return cls.__instances[cls]
+
+
+class ChildProcess(dict, metaclass=SingletonMetaCls): ...
+
+
+class IsExit(list, metaclass=SingletonMetaCls): ...
+
+
+IsExit().append(False)  # 초기화, TODO: 좋은 코드는 아닌 듯..
+
+
 # TODO: 이런 하드코딩 스타일은 바람직하지 않음. 더 좋은 코드 구조로 개선 필요.
 DataFrameKeyword = [
     "obs_batch",

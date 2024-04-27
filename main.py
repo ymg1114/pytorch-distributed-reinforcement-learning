@@ -26,6 +26,8 @@ from utils.utils import (
     model_dir,
     extract_file_num,
     DataFrameKeyword,
+    ChildProcess,
+    IsExit,
 )
 from utils.lock import Mutex
 
@@ -189,12 +191,12 @@ class Runner:
                     kwargs=src_w.get("kwargs"),
                     daemon=True,
                 )  # child-processes
-                child_process.update({w: src_w})
+                ChildProcess().update({w: src_w})
 
-            for wp in child_process:
+            for wp in ChildProcess():
                 wp.start()
 
-            # for wp in child_process:
+            # for wp in ChildProcess():
             #     wp.join()
 
         except:
@@ -203,7 +205,7 @@ class Runner:
             err, log_dir = Runner.extract_err("worker")
             SaveErrorLog(err, log_dir)
 
-            # for wp in child_process:
+            # for wp in ChildProcess():
             #     wp.terminate()
 
     @register
@@ -238,7 +240,7 @@ class Runner:
                 kwargs=src_s.get("kwargs"),
                 daemon=True,
             )  # child-processes
-            child_process.update({s: src_s})
+            ChildProcess().update({s: src_s})
 
             heartbeat = mp.Value("d", time.time())
 
@@ -259,14 +261,14 @@ class Runner:
                 kwargs=src_l.get("kwargs"),
                 daemon=True,
             )  # child-processes
-            child_process.update({l: src_l})
+            ChildProcess().update({l: src_l})
 
-            for lp in child_process:
+            for lp in ChildProcess():
                 lp.start()
 
             # run_learner(args, mutex, learner_model, queue, shared_stat_array=shared_stat_array)
 
-            # for lp in child_process:
+            # for lp in ChildProcess():
             #     lp.join()
 
         except:
@@ -275,19 +277,11 @@ class Runner:
             err, log_dir = Runner.extract_err("learner")
             SaveErrorLog(err, log_dir)
 
-            # for lp in child_process:
+            # for lp in ChildProcess():
             #     lp.terminate()
 
     def start(self):
-        # 자식 프로세스 목록 초기화
-        global child_process
-        child_process = {}
-
         def _monitor_child_process(restart_delay=60):
-            """TODO: 정상 작동하지 않는 듯..
-            텐서보드 기록에 버그를 일으킴.
-            일단 사용하지 않음."""
-
             def _restart_process(src, heartbeat):
                 # heartbeat 기록 갱신
                 heartbeat.value = time.time()
@@ -314,13 +308,13 @@ class Runner:
                     daemon=True,
                 )  # child-processes
                 new_p.start()
-                child_process.update({new_p: src})
+                ChildProcess().update({new_p: src})
 
                 time.sleep(0.5)
 
             while True:
-                for p in list(child_process.keys()):
-                    src = child_process.get(p)
+                for p in list(ChildProcess().keys()):
+                    src = ChildProcess().get(p)
 
                     heartbeat = src.get("heartbeat")
                     assert heartbeat is not None
@@ -332,11 +326,14 @@ class Runner:
                         # 해당 자식 프로세스 종료
                         p.terminate()
                         p.join()
-                        child_process.pop(p)
+                        ChildProcess().pop(p)
                         assert not p.is_alive(), f"p: {p}"
 
                         # 해당 자식 프로세스 신규 생성 및 시작
                         _restart_process(src, heartbeat)
+
+                if IsExit()[0]:
+                    break
 
                 time.sleep(1.0)
 
@@ -350,6 +347,8 @@ class Runner:
 
             # 자식 프로세스 종료 함수
             def terminate_processes(processes):
+                IsExit()[0] = True
+
                 for p in processes:
                     if p.is_alive():
                         p.terminate()
@@ -358,13 +357,13 @@ class Runner:
             # 종료 시그널 핸들러 설정
             def signal_handler(signum, frame):
                 print("Signal received, terminating processes")
-                terminate_processes(child_process)
+                terminate_processes(ChildProcess())
 
             signal.signal(signal.SIGINT, signal_handler)
             signal.signal(signal.SIGTERM, signal_handler)
 
             # 프로세스 종료 시 실행될 함수 등록
-            atexit.register(terminate_processes, child_process)
+            atexit.register(terminate_processes, ChildProcess())
 
         try:
             if func_name in fn_dict:
@@ -377,10 +376,10 @@ class Runner:
             print(f"error: {e}")
             traceback.print_exc(limit=128)
 
-            for p in child_process:
+            for p in ChildProcess():
                 p.terminate()
 
-            for p in child_process:
+            for p in ChildProcess():
                 p.join()
 
         finally:
