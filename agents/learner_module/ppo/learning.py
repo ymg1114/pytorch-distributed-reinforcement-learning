@@ -50,7 +50,7 @@ def learning(parent, timer: ExecutionTimer):
                             + parent.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
                         )
                         delta = td_target - value[:, :-1]
-                        delta = delta.cpu().detach()
+                        delta = delta.detach()
 
                         gae = compute_gae(
                             delta, parent.args.gamma, parent.args.lmbda
