@@ -6,7 +6,10 @@ IMPALA
 
 V-MPO (TODO)
 
-SAC (TODO, DO not Work Yet !)
+SAC
+
+## Caution!
+Learning environment is configured to `CartPole-v1`
 
 ## How to run
 

@@ -45,7 +45,6 @@ async def learning(parent, timer: ExecutionTimer):
                             (
                                 act_probs_pol
                                 * (parent.args.alpha * log_probs_pol - min_q_pol)
-                                * min_q_pol
                             )[:, :-1]
                             .sum(-1)
                             .mean()
