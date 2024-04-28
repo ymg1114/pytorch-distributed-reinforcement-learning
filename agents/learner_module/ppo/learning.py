@@ -11,7 +11,7 @@ from ..compute_loss import compute_gae
 
 
 async def learning(parent, timer: ExecutionTimer):
-    assert hasattr(parent, "batch_queue")  # asyncio.Queue(buffer_size)
+    assert hasattr(parent, "batch_queue")
     parent.idx = 0
 
     while True:
@@ -88,22 +88,23 @@ async def learning(parent, timer: ExecutionTimer):
                             "ratio": ratio.detach().cpu(),
                         }
 
-                with timer.timer("learner-backward-time"):
-                    parent.optimizer.zero_grad()
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        parent.model.actor.parameters(), parent.args.max_grad_norm
-                    )
-                    print(
-                        "loss: {:.5f} original_value_loss: {:.5f} original_policy_loss: {:.5f} original_policy_entropy: {:.5f} ratio-avg: {:.5f}".format(
-                            loss.item(),
-                            detached_losses["value-loss"],
-                            detached_losses["policy-loss"],
-                            detached_losses["policy-entropy"],
-                            detached_losses["ratio"].mean(),
-                        )
-                    )
-                    parent.optimizer.step()
+                        with timer.timer("learner-backward-time"):
+                            parent.optimizer.zero_grad()
+                            loss.backward()
+                            torch.nn.utils.clip_grad_norm_(
+                                parent.model.actor.parameters(),
+                                parent.args.max_grad_norm,
+                            )
+                            print(
+                                "loss: {:.5f} original_value_loss: {:.5f} original_policy_loss: {:.5f} original_policy_entropy: {:.5f} ratio-avg: {:.5f}".format(
+                                    loss.item(),
+                                    detached_losses["value-loss"],
+                                    detached_losses["policy-loss"],
+                                    detached_losses["policy-entropy"],
+                                    detached_losses["ratio"].mean(),
+                                )
+                            )
+                            parent.optimizer.step()
 
                 parent.pub_model(parent.model.actor.state_dict())
 

@@ -84,18 +84,31 @@ class LearnerBase(SMInterFace):
 
     def log_loss_tensorboard(self, timer: ExecutionTimer, loss, detached_losses):
         self.writer.add_scalar("total-loss", float(loss.item()), self.idx)
-        self.writer.add_scalar(
-            "original-value-loss", detached_losses["value-loss"], self.idx
-        )
-        self.writer.add_scalar(
-            "original-policy-loss", detached_losses["policy-loss"], self.idx
-        )
-        self.writer.add_scalar(
-            "original-policy-entropy", detached_losses["policy-entropy"], self.idx
-        )
-        self.writer.add_scalar("min-ratio", detached_losses["ratio"].min(), self.idx)
-        self.writer.add_scalar("max-ratio", detached_losses["ratio"].max(), self.idx)
-        self.writer.add_scalar("avg-ratio", detached_losses["ratio"].mean(), self.idx)
+        if "value-loss" in detached_losses:
+            self.writer.add_scalar(
+                "original-value-loss", detached_losses["value-loss"], self.idx
+            )
+
+        if "policy-loss" in detached_losses:
+            self.writer.add_scalar(
+                "original-policy-loss", detached_losses["policy-loss"], self.idx
+            )
+
+        if "policy-entropy" in detached_losses:
+            self.writer.add_scalar(
+                "original-policy-entropy", detached_losses["policy-entropy"], self.idx
+            )
+
+        if "ratio" in detached_losses:
+            self.writer.add_scalar(
+                "min-ratio", detached_losses["ratio"].min(), self.idx
+            )
+            self.writer.add_scalar(
+                "max-ratio", detached_losses["ratio"].max(), self.idx
+            )
+            self.writer.add_scalar(
+                "avg-ratio", detached_losses["ratio"].mean(), self.idx
+            )
 
         # TODO: 좋은 형태의 구조는 아님
         if self.np_shared_stat_array is not None:
@@ -186,7 +199,7 @@ class LearnerBase(SMInterFace):
             await asyncio.sleep(0.001)
 
     async def learning_chain_ppo(self):
-        self.batch_queue = asyncio.Queue(self.args.buffer_size)
+        self.batch_queue = asyncio.Queue(1024)
         tasks = [
             asyncio.create_task(self.learning_ppo()),
             asyncio.create_task(self.put_batch_to_batch_q()),
@@ -194,15 +207,20 @@ class LearnerBase(SMInterFace):
         await asyncio.gather(*tasks)
 
     async def learning_chain_impala(self):
-        self.batch_queue = asyncio.Queue(self.args.buffer_size)
+        self.batch_queue = asyncio.Queue(1024)
         tasks = [
             asyncio.create_task(self.learning_impala()),
             asyncio.create_task(self.put_batch_to_batch_q()),
         ]
         await asyncio.gather(*tasks)
 
-    # TODO
-    async def learning_chain_sac(): ...
+    async def learning_chain_sac(self):
+        self.batch_buffer = asyncio.Queue(1024)
+        tasks = [
+            asyncio.create_task(self.learning_sac()),
+            asyncio.create_task(self.put_batch_to_buffer_q()),
+        ]
+        await asyncio.gather(*tasks)
 
 
 class LearnerSingle(LearnerBase):
@@ -226,12 +244,74 @@ class LearnerSeperate(LearnerBase):
         self.actor_optimizer = Adam(self.actor.parameters(), lr=self.args.lr)
         self.critic_optimizer = Adam(self.critic.parameters(), lr=self.args.lr)
 
-    # TODO: for "SAC"
-    def is_sh_ready(self):
-        bn = self.args.batch_size
+    def monitor_flag(func):
+        first_return = [False]
+
+        def _wrapper(self, *args, **kwargs):
+            nonlocal first_return
+            _bool = func(self, *args, **kwargs)
+
+            # 최초 True -> 계속적으로 True 반환
+            if _bool is True:
+                first_return[0] = True
+                self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
+
+            return first_return[0] or _bool
+
+        return _wrapper
+
+    @monitor_flag
+    def is_sh_ready(self) -> bool:
+        buf = self.args.buffer_size
         val = self.sh_data_num.value
-        if val >= bn:
-            print("batch is ready !")
-            return True
-        else:
-            return False
+        return True if val >= buf else False
+
+    def sample_rand_batch_from_sh_memory(self):
+        sq = self.args.seq_len
+        bn = self.args.batch_size
+        sha = self.obs_shape
+        hs = self.args.hidden_size
+        ac = self.args.action_space
+
+        buf = self.args.buffer_size
+        assert buf == int(
+            self.sh_obs_batch.shape[0] / (sq * sha[0])
+        )  # TODO: 좋은 코드는 아닌 듯..
+
+        idx = np.random.randint(0, buf, size=bn)
+
+        _sh_obs_batch = self.sh_obs_batch.reshape((buf, sq, *sha))[idx]
+        _sh_act_batch = self.sh_act_batch.reshape((buf, sq, 1))[idx]
+        _sh_rew_batch = self.sh_rew_batch.reshape((buf, sq, 1))[idx]
+        _sh_logits_batch = self.sh_logits_batch.reshape((buf, sq, ac))[idx]
+        _sh_is_fir_batch = self.sh_is_fir_batch.reshape((buf, sq, 1))[idx]
+        _sh_hx_batch = self.sh_hx_batch.reshape((buf, sq, hs))[idx]
+        _sh_cx_batch = self.sh_cx_batch.reshape((buf, sq, hs))[idx]
+
+        # (batch, seq, feat)
+        sh_obs_bat = LearnerBase.copy_to_ndarray(_sh_obs_batch)
+        sh_act_bat = LearnerBase.copy_to_ndarray(_sh_act_batch)
+        sh_rew_bat = LearnerBase.copy_to_ndarray(_sh_rew_batch)
+        sh_logits_bat = LearnerBase.copy_to_ndarray(_sh_logits_batch)
+        sh_is_fir_bat = LearnerBase.copy_to_ndarray(_sh_is_fir_batch)
+        sh_hx_bat = LearnerBase.copy_to_ndarray(_sh_hx_batch)
+        sh_cx_bat = LearnerBase.copy_to_ndarray(_sh_cx_batch)
+
+        return (
+            to_torch(sh_obs_bat),
+            to_torch(sh_act_bat),
+            to_torch(sh_rew_bat),
+            to_torch(sh_logits_bat),
+            to_torch(sh_is_fir_bat),
+            to_torch(sh_hx_bat),
+            to_torch(sh_cx_bat),
+        )
+
+    async def put_batch_to_buffer_q(self):
+        while True:
+            if self.is_sh_ready():
+                batch_args = self.sample_rand_batch_from_sh_memory()
+                await self.batch_buffer.put(batch_args)
+                print("batch is ready !")
+
+            await asyncio.sleep(0.001)

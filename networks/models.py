@@ -39,13 +39,13 @@ class MlpLSTM(nn.Module):
         hx, cx = self.lstmcell(x, lstm_hxs)
 
         logits = self.logits(hx)  # policy
-        dist = self.get_dist(logits)
+        _, dist = self.get_dist(logits)
 
         return dist.sample().detach(), dist.logits.detach(), (hx.detach(), cx.detach())
 
     def get_dist(self, logits):
         probs = F.softmax(logits, dim=-1)  # logits: (batch, feat)
-        return self.CT(probs)
+        return probs, self.CT(probs)
 
     def forward(self, obs, lstm_hxs, behaviour_acts):
         batch, seq, *sha = obs.size()
@@ -73,7 +73,7 @@ class MlpLSTM(nn.Module):
         return log_probs, entropy, value
 
     def _forward_dist(self, logits, behaviour_acts):
-        dist = self.get_dist(logits)  # (batch, seq, num_acts)
+        _, dist = self.get_dist(logits)  # (batch, seq, num_acts)
 
         log_probs = dist.log_prob(behaviour_acts.squeeze(-1))  # (batch, seq)
         entropy = dist.entropy()  # (batch, seq)
@@ -110,26 +110,25 @@ class MlpLSTMActor(MlpLSTM):
         output = torch.stack(output, dim=1)  # (batch, seq, feat)
 
         logits = self.logits(output)  # (batch, seq, num_acts)
-        dist = self.get_dist(logits)  # (batch, seq, num_acts)
+        probs, _ = self.get_dist(logits)  # (batch, seq, num_acts)
 
-        act_sampled = dist.sample().detach()
-        log_probs = dist.log_prob(act_sampled.squeeze(-1))  # (batch, seq)
+        # Have to deal with situation of 0.0 probabilities because we can't do log 0
+        z = probs == 0.0  # mask
+        z = z.float() * 1e-8
 
-        return act_sampled.view(batch, seq, 1), log_probs.view(batch, seq, 1)
+        return (
+            probs.view(batch, seq, -1),
+            torch.log(probs + z).view(batch, seq, -1),
+        )
 
 
 class MlpLSTMCritic(MlpLSTM):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # act-encoding
-        self.encode_act = nn.Sequential(
-            nn.Linear(in_features=1, out_features=self.hidden_size / 2),
-            nn.ReLU(),
-        )
 
         # obs-encoding / overriding
         self.body = nn.Sequential(
-            nn.Linear(in_features=self.input_size, out_features=self.hidden_size / 2),
+            nn.Linear(in_features=self.input_size, out_features=self.hidden_size),
             nn.ReLU(),
         )
 
@@ -143,23 +142,17 @@ class MlpLSTMCritic(MlpLSTM):
             in_features=self.hidden_size, out_features=self.n_outputs
         )
 
-    def forward(self, obs, act, lstm_hxs):
+    def forward(self, obs, lstm_hxs):
         batch, seq, *sha = obs.size()
         hx, cx = lstm_hxs
 
         obs = obs.contiguous().view(batch * seq, *sha)
         x_o = self.body.forward(obs)
-        x_o = x_o.view(batch, seq, self.hidden_size / 2)  # (batch, seq, hidden_size/2)
-
-        act = act.contiguous().view(batch * seq, 1)
-        x_a = self.encode_act.forward(act)
-        x_a = x_a.view(batch, seq, self.hidden_size / 2)  # (batch, seq, hidden_size/2)
-
-        x = torch.cat([x_o, x_a], dim=-1)  # (batch, seq, hidden_size)
+        x_o = x_o.view(batch, seq, self.hidden_size)  # (batch, seq, hidden_size/2)
 
         output = []
         for i in range(seq):
-            hx, cx = self.lstmcell(x[:, i], (hx, cx))
+            hx, cx = self.lstmcell(x_o[:, i], (hx, cx))
             output.append(hx)
         output = torch.stack(output, dim=1)  # (batch, seq, feat)
 

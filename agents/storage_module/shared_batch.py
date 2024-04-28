@@ -63,6 +63,53 @@ def reset_shared_memory(args, obs_shape):
     return shm_ref
 
 
+def reset_shared_buffer_memory(args, obs_shape):
+    shm_ref = {}  # Learner / LearnerStorage 에서 공유할 메모리 주소를 담음
+
+    _buffer_size = args.buffer_size
+
+    obs_batch = np.zeros(
+        args.seq_len * _buffer_size * mul(obs_shape),
+        dtype=np.float32,
+    )  # observation-space
+    set_shared_memory(shm_ref, obs_batch, "obs_batch")
+
+    act_batch = np.zeros(
+        args.seq_len * _buffer_size * 1, dtype=np.float32
+    )  # not one-hot, but action index (scalar)
+    set_shared_memory(shm_ref, act_batch, "act_batch")
+
+    rew_batch = np.zeros(args.seq_len * _buffer_size * 1, dtype=np.float32)  # scalar
+    set_shared_memory(shm_ref, rew_batch, "rew_batch")
+
+    logits_batch = np.zeros(
+        args.seq_len * _buffer_size * args.action_space,
+        dtype=np.float32,
+    )  # action-space (logits)
+    set_shared_memory(shm_ref, logits_batch, "logits_batch")
+
+    is_fir_batch = np.zeros(args.seq_len * _buffer_size * 1, dtype=np.float32)  # scalar
+    set_shared_memory(shm_ref, is_fir_batch, "is_fir_batch")
+
+    hx_batch = np.zeros(
+        args.seq_len * _buffer_size * args.hidden_size,
+        dtype=np.float32,
+    )  # hidden-states
+    set_shared_memory(shm_ref, hx_batch, "hx_batch")
+
+    cx_batch = np.zeros(
+        args.seq_len * _buffer_size * args.hidden_size,
+        dtype=np.float32,
+    )  # cell-states
+    set_shared_memory(shm_ref, cx_batch, "cx_batch")
+
+    # 공유메모리 저장 인덱스
+    sh_data_num = mp.Value("i", 0)
+    sh_data_num.value = 0  # 초기화
+    shm_ref.update({"batch_index": sh_data_num})
+    return shm_ref
+
+
 class SMInterFace:
     def __init__(self, shm_ref):
         self.shm_ref = shm_ref

@@ -120,7 +120,7 @@ class LearnerStorage(SMInterFace):
 
     def make_batch(self, rollout):
         sq = self.args.seq_len
-        bn = self.args.batch_size
+        # bn = self.args.batch_size
 
         num = self.sh_data_num.value
 
@@ -128,7 +128,13 @@ class LearnerStorage(SMInterFace):
         ac = self.args.action_space
         hs = self.args.hidden_size
 
-        if num < bn:
+        # buf = self.args.buffer_size
+        mem_size = int(
+            self.sh_obs_batch.shape[0] / (sq * sha)
+        )  # TODO: 좋은 코드는 아닌 듯..
+        # assert buf == mem_size
+
+        if num < mem_size:
             obs = rollout["obs"]
             act = rollout["act"]
             rew = rollout["rew"]

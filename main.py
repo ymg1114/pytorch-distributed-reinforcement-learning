@@ -13,7 +13,10 @@ from pathlib import Path
 from multiprocessing import Process
 from datetime import datetime
 
-from agents.storage_module.shared_batch import reset_shared_memory
+from agents.storage_module.shared_batch import (
+    reset_shared_memory,
+    reset_shared_buffer_memory,
+)
 from agents.learner import LearnerSingle, LearnerSeperate
 from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
@@ -164,7 +167,7 @@ class Runner:
         learning_chain_switcher = {
             "PPO": learner.learning_chain_ppo,
             "IMPALA": learner.learning_chain_impala,
-            "SAC": learner.learning_chain_sac,  # TODO
+            "SAC": learner.learning_chain_sac,
         }
         learning_chain = learning_chain_switcher.get(
             args.algo, lambda: AssertionError("Should be PPO or IMPALA or SAC")
@@ -241,7 +244,15 @@ class Runner:
             mutex = Mutex()
 
             # 학습을 위한 공유메모리 확보
-            shm_ref = reset_shared_memory(self.args, self.obs_shape)
+            shm_ref_switcher = {
+                "PPO": reset_shared_memory,
+                "IMPALA": reset_shared_memory,
+                "SAC": reset_shared_buffer_memory,
+            }
+            shm_ref_factory = shm_ref_switcher.get(
+                self.args.algo, lambda: AssertionError("Should be PPO or IMPALA or SAC")
+            )
+            shm_ref = shm_ref_factory(self.args, self.obs_shape)
 
             # TODO: 좋은 구조는 아님.
             shared_stat_array = mp.Array(

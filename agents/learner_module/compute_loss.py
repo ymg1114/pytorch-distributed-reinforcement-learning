@@ -61,3 +61,8 @@ def compute_v_trace(
     )
 
     return rho_clipped, advantages.detach(), values_target.detach()
+
+
+def soft_update(critic, target_critic, tau=0.005):
+    for p, target_p in zip(critic.parameters(), target_critic.parameters()):
+        target_p.data.copy_((1.0 - tau) * target_p.data + tau * p.data)
