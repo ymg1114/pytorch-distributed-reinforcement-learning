@@ -6,6 +6,8 @@ import asyncio
 import numpy as np
 import multiprocessing as mp
 
+from .storage_module.shared_batch import SMInterFace
+
 from buffers.rollout_assembler import RolloutAssembler
 from utils.lock import Mutex
 from utils.utils import (
@@ -13,64 +15,45 @@ from utils.utils import (
     mul,
     decode,
     flatten,
-    to_torch,
     counted,
     LS_IP,
-    ExecutionTimer,
-    Params,
 )
 
 
 # timer = ExecutionTimer(num_transition=Params.seq_len*1) # LearnerStorage에서 데이터 처리량 (수신) / 부정확한 값이지만 어쩔 수 없음
 
 
-class LearnerStorage:
+class LearnerStorage(SMInterFace):
     def __init__(
         self,
         args,
         mutex,
         dataframe_keyword,
-        queue,
+        shm_ref,
         obs_shape,
         shared_stat_array=None,
         heartbeat=None,
     ):
+        super().__init__(shm_ref=shm_ref)
+
         self.args = args
         self.dataframe_keyword = dataframe_keyword
         self.obs_shape = obs_shape
 
         self.mutex: Mutex = mutex
-        self._init = False
 
-        self.batch_queue = queue
         if shared_stat_array is not None:
             self.np_shared_stat_array: np.ndarray = np.frombuffer(
-                buffer=shared_stat_array.get_obj(), dtype=np.float64, count=-1
+                buffer=shared_stat_array.get_obj(), dtype=np.float32, count=-1
             )
 
         self.heartbeat = heartbeat
 
         self.zeromq_set()
-        self.reset_shared_memory()
+        self.get_shared_memory_interface()
 
     def __del__(self):  # 소멸자
         self.sub_socket.close()
-
-    # def __del__(self):
-    #     if hasattr(self, "_init") and self._init is True:
-
-    #         def del_sh(shm):
-    #             shm.close()
-    #             shm.unlink()
-
-    #         del_sh(self.sh_obs_batch)
-    #         del_sh(self.sh_act_batch)
-    #         del_sh(self.sh_rew_batch)
-    #         del_sh(self.sh_logits_batch)
-    #         del_sh(self.sh_is_fir_batch)
-    #         del_sh(self.sh_hx_batch)
-    #         del_sh(self.sh_cx_batch)
-    #         del_sh(self.sh_data_num)
 
     def zeromq_set(self):
         context = zmq.asyncio.Context()
@@ -80,85 +63,12 @@ class LearnerStorage:
         self.sub_socket.bind(f"tcp://{LS_IP}:{self.args.learner_port}")
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
-    def reset_shared_memory(self):
-        self.shm_ref = {}
-
-        obs_batch = np.zeros(
-            self.args.seq_len * self.args.batch_size * mul(self.obs_shape),
-            dtype=np.float64,
-        )  # observation-space
-        self.sh_obs_batch = LearnerStorage.set_shared_memory(
-            self, obs_batch, "obs_batch"
-        )
-
-        act_batch = np.zeros(
-            self.args.seq_len * self.args.batch_size * 1, dtype=np.float64
-        )  # not one-hot, but action index (scalar)
-        self.sh_act_batch = LearnerStorage.set_shared_memory(
-            self, act_batch, "act_batch"
-        )
-
-        rew_batch = np.zeros(
-            self.args.seq_len * self.args.batch_size * 1, dtype=np.float64
-        )  # scalar
-        self.sh_rew_batch = LearnerStorage.set_shared_memory(
-            self, rew_batch, "rew_batch"
-        )
-
-        logits_batch = np.zeros(
-            self.args.seq_len * self.args.batch_size * self.args.action_space,
-            dtype=np.float64,
-        )  # action-space (logits)
-        self.sh_logits_batch = LearnerStorage.set_shared_memory(
-            self, logits_batch, "logits_batch"
-        )
-
-        is_fir_batch = np.zeros(
-            self.args.seq_len * self.args.batch_size * 1, dtype=np.float64
-        )  # scalar
-        self.sh_is_fir_batch = LearnerStorage.set_shared_memory(
-            self, is_fir_batch, "is_fir_batch"
-        )
-
-        hx_batch = np.zeros(
-            self.args.seq_len * self.args.batch_size * self.args.hidden_size,
-            dtype=np.float64,
-        )  # hidden-states
-        self.sh_hx_batch = LearnerStorage.set_shared_memory(self, hx_batch, "hx_batch")
-
-        cx_batch = np.zeros(
-            self.args.seq_len * self.args.batch_size * self.args.hidden_size,
-            dtype=np.float64,
-        )  # cell-states
-        self.sh_cx_batch = LearnerStorage.set_shared_memory(self, cx_batch, "cx_batch")
-
-        self.sh_data_num = mp.Value("i", 0)
-        self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
-
-        self._init = True
-        return
-
-    @staticmethod
-    def set_shared_memory(self, np_array, name):
-        """멀티프로세싱 환경에서 데이터 복사 없이 공유 메모리를 통해 데이터를 공유함으로써 성능을 개선할 수 있음."""
-
-        assert name in self.dataframe_keyword
-
-        shm_array = mp.Array("d", len(np_array))
-
-        return np.frombuffer(buffer=shm_array.get_obj(), dtype=np_array.dtype, count=-1)
-
-    def reset_data_num(self):
-        self.sh_data_num.value = 0
-        return
-
     async def shared_memory_chain(self):
         self.rollout_assembler = RolloutAssembler(self.args, asyncio.Queue(1024))
 
         tasks = [
             asyncio.create_task(self.retrieve_rollout_from_worker()),
             asyncio.create_task(self.build_as_batch()),
-            asyncio.create_task(self.put_batch_to_batch_q()),
         ]
         await asyncio.gather(*tasks)
 
@@ -179,24 +89,13 @@ class LearnerStorage:
 
     async def build_as_batch(self):
         while True:
+            if self.heartbeat is not None:
+                self.heartbeat.value = time.time()
+
             # with timer.timer("learner-storage-throughput", check_throughput=True):
             data = await self.rollout_assembler.pop()
             self.make_batch(data)
             print("rollout is poped !")
-
-            await asyncio.sleep(0.001)
-
-    async def put_batch_to_batch_q(self):
-        while True:
-            if self.heartbeat is not None:
-                self.heartbeat.value = time.time()
-
-            if self.is_sh_ready():
-                batch_args = self.get_batch_from_sh_memory()
-                # self.mutex.put(self.batch_queue, batch_args)
-                self.batch_queue.put(batch_args)
-                self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
-                print("batch is ready !")
 
             await asyncio.sleep(0.001)
 
@@ -248,56 +147,3 @@ class LearnerStorage:
             self.sh_cx_batch[sq * num * hs : sq * (num + 1) * hs] = flatten(cx)
 
             self.sh_data_num.value += 1
-
-    def is_sh_ready(self):
-        bn = self.args.batch_size
-        val = self.sh_data_num.value
-        return True if val >= bn else False
-
-    @staticmethod
-    def copy_to_ndarray(src):
-        dst = np.empty(src.shape, dtype=src.dtype)
-        np.copyto(
-            dst, src
-        )  # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
-        return dst
-
-    def get_batch_from_sh_memory(self):
-        sq = self.args.seq_len
-        bn = self.args.batch_size
-        sha = self.obs_shape
-        hs = self.args.hidden_size
-        ac = self.args.action_space
-
-        # (batch, seq, feat)
-        sh_obs_bat = LearnerStorage.copy_to_ndarray(self.sh_obs_batch).reshape(
-            (bn, sq, *sha)
-        )
-        sh_act_bat = LearnerStorage.copy_to_ndarray(self.sh_act_batch).reshape(
-            (bn, sq, 1)
-        )
-        sh_rew_bat = LearnerStorage.copy_to_ndarray(self.sh_rew_batch).reshape(
-            (bn, sq, 1)
-        )
-        sh_logits_bat = LearnerStorage.copy_to_ndarray(self.sh_logits_batch).reshape(
-            (bn, sq, ac)
-        )
-        sh_is_fir_bat = LearnerStorage.copy_to_ndarray(self.sh_is_fir_batch).reshape(
-            (bn, sq, 1)
-        )
-        sh_hx_bat = LearnerStorage.copy_to_ndarray(self.sh_hx_batch).reshape(
-            (bn, sq, hs)
-        )
-        sh_cx_bat = LearnerStorage.copy_to_ndarray(self.sh_cx_batch).reshape(
-            (bn, sq, hs)
-        )
-
-        return (
-            to_torch(sh_obs_bat),
-            to_torch(sh_act_bat),
-            to_torch(sh_rew_bat),
-            to_torch(sh_logits_bat),
-            to_torch(sh_is_fir_bat),
-            to_torch(sh_hx_bat),
-            to_torch(sh_cx_bat),
-        )

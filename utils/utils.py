@@ -69,7 +69,7 @@ W_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
 M_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
 
 
-flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float64)
+flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float32)
 
 
 to_torch = lambda nparray: torch.from_numpy(nparray).type(torch.float32)

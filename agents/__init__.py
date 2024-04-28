@@ -1,22 +1,22 @@
-from .learner_module.ppo.learning import learning as learning_ppo
-from .learner_module.impala.learning import learning as learning_impala
-from .learner_module.sac.learning import learning as learning_sac  # TODO
+from .learner_module.ppo.learning import learning as alearning_ppo
+from .learner_module.impala.learning import learning as alearning_impala
+from .learner_module.sac.learning import learning as alearning_sac  # TODO
 
 
-def ppo_wrapper(timer):
-    def _outer(func):
-        def _inner(self, *args, **kwargs):
-            return learning_ppo(self, timer, *args, **kwargs)
+def ppo_awrapper(timer):
+    def _outer(func):  # 주의) func 자체는 껍데기 동기함수
+        async def _inner(self, *args, **kwargs):
+            return await alearning_ppo(self, timer, *args, **kwargs)
 
         return _inner
 
     return _outer
 
 
-def impala_wrapper(timer):
-    def _outer(func):
-        def _inner(self, *args, **kwargs):
-            return learning_impala(self, timer, *args, **kwargs)
+def impala_awrapper(timer):
+    def _outer(func):  # 주의) func 자체는 껍데기 동기함수
+        async def _inner(self, *args, **kwargs):
+            return await alearning_impala(self, timer, *args, **kwargs)
 
         return _inner
 
@@ -24,10 +24,10 @@ def impala_wrapper(timer):
 
 
 # TODO
-def sac_wrapper(timer):
-    def _outer(func):
-        def _inner(self, *args, **kwargs):
-            return learning_sac(self, timer, *args, **kwargs)
+def sac_awrapper(timer):
+    def _outer(func):  # 주의) func 자체는 껍데기 동기함수
+        async def _inner(self, *args, **kwargs):
+            return await alearning_sac(self, timer, *args, **kwargs)
 
         return _inner
 

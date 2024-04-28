@@ -1,5 +1,5 @@
 import os
-
+import asyncio
 import time
 import torch
 import torch.nn.functional as F
@@ -10,16 +10,15 @@ from utils.utils import ExecutionTimer
 from ..compute_loss import compute_v_trace
 
 
-def learning(parent, timer: ExecutionTimer):
+async def learning(parent, timer: ExecutionTimer):
+    assert hasattr(parent, "batch_queue")  # asyncio.Queue(buffer_size)
     parent.idx = 0
 
     while True:
         batch_args = None
         with timer.timer("learner-throughput", check_throughput=True):
             with timer.timer("learner-batching-time"):
-                batch_args = parent.batch_queue.get()
-                # batch_args = parent.mutex.get(parent.batch_queue)
-                # batch_args = parent.mutex.get_with_timeout(parent.batch_queue)
+                batch_args = await parent.batch_queue.get()
 
             if batch_args is not None:
                 with timer.timer("learner-forward-time"):
@@ -39,7 +38,7 @@ def learning(parent, timer: ExecutionTimer):
                         )  # (batch, seq, hidden) -> (batch, hidden)
 
                         # on-line model forwarding
-                        log_probs, entropy, value = parent.model(
+                        log_probs, entropy, value = parent.model.actor(
                             obs,  # (batch, seq, *sha)
                             lstm_states,  # ((batch, hidden), (batch, hidden))
                             act,  # (batch, seq, 1)
@@ -78,7 +77,7 @@ def learning(parent, timer: ExecutionTimer):
                     parent.optimizer.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(
-                        parent.model.parameters(), parent.args.max_grad_norm
+                        parent.model.actor.parameters(), parent.args.max_grad_norm
                     )
                     print(
                         "loss: {:.5f} original_value_loss: {:.5f} original_policy_loss: {:.5f} original_policy_entropy: {:.5f} ratio-avg: {:.5f}".format(
@@ -91,7 +90,7 @@ def learning(parent, timer: ExecutionTimer):
                     )
                     parent.optimizer.step()
 
-                parent.pub_model(parent.model.state_dict())
+                parent.pub_model(parent.model.actor.state_dict())
 
                 if parent.idx % parent.args.loss_log_interval == 0:
                     parent.log_loss_tensorboard(timer, loss, detached_losses)
@@ -108,3 +107,5 @@ def learning(parent, timer: ExecutionTimer):
 
             if parent.heartbeat is not None:
                 parent.heartbeat.value = time.time()
+
+        await asyncio.sleep(0.001)

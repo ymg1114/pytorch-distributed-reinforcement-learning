@@ -13,10 +13,13 @@ from pathlib import Path
 from multiprocessing import Process
 from datetime import datetime
 
-from agents.learner import Learner
+from agents.storage_module.shared_batch import reset_shared_memory
+from agents.learner import LearnerSingle, LearnerSeperate
 from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
+
+from networks.models import MlpLSTMSingle, MlpLSTMSeperate
 
 from utils.utils import (
     KillProcesses,
@@ -68,13 +71,27 @@ class Runner:
 
         # 현재 openai-gym의 "CartPole-v1" 환경만 한정
         assert not self.args.need_conv or len(env.observation_space.shape) <= 1
-        M = __import__("networks.models", fromlist=[None]).MlpLSTM
+
+        module_switcher = {  # (learner_cls, model_cls)
+            "PPO": (LearnerSingle, MlpLSTMSingle),
+            "IMPALA": (LearnerSingle, MlpLSTMSingle),
+            "SAC": (LearnerSeperate, MlpLSTMSeperate),
+        }
+        module_tuple = module_switcher.get(
+            self.args.algo, lambda: AssertionError("Should be PPO or IMPALA or SAC")
+        )
+
+        LearnerCls = module_tuple[0]
+        ModelCls = module_tuple[1]
+
         self.obs_shape = [env.observation_space.shape[0]]
         env.close()
 
-        self.Model = M(
+        self.LearnerCls = LearnerCls
+        self.Model = ModelCls(
             *self.obs_shape, self.n_outputs, self.args.seq_len, self.args.hidden_size
         )
+
         self.Model.to(torch.device("cpu"))  # cpu 모델
 
     def set_model_weight(self, model_dir):
@@ -114,7 +131,7 @@ class Runner:
         args,
         mutex,
         dataframe_keyword,
-        queue,
+        shm_ref,
         *obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -123,7 +140,7 @@ class Runner:
             args,
             mutex,
             dataframe_keyword,
-            queue,
+            shm_ref,
             obs_shape,
             shared_stat_array,
             heartbeat,
@@ -132,20 +149,27 @@ class Runner:
 
     @staticmethod
     def run_learner(
-        learner_model, args, mutex, queue, shared_stat_array=None, heartbeat=None
+        learner_model,
+        learner_cls,
+        args,
+        mutex,
+        shm_ref,
+        *obs_shape,
+        shared_stat_array=None,
+        heartbeat=None,
     ):
-        learner = Learner(
-            args, mutex, learner_model, queue, shared_stat_array, heartbeat
+        learner = learner_cls(
+            args, mutex, learner_model, shm_ref, obs_shape, shared_stat_array, heartbeat
         )
-        learning_switcher = {
-            "PPO": learner.learning_ppo,
-            "IMPALA": learner.learning_impala,
-            "SAC": learner.learning_sac,  # TODO
+        learning_chain_switcher = {
+            "PPO": learner.learning_chain_ppo,
+            "IMPALA": learner.learning_chain_impala,
+            "SAC": learner.learning_chain_sac,  # TODO
         }
-        learning = learning_switcher.get(
-            args.algo, lambda: AssertionError("Should be PPO or IMPALA")
+        learning_chain = learning_chain_switcher.get(
+            args.algo, lambda: AssertionError("Should be PPO or IMPALA or SAC")
         )
-        learning()
+        asyncio.run(learning_chain())
 
     @register
     def manager_sub_process(self):
@@ -169,7 +193,7 @@ class Runner:
                 worker_model.load_state_dict(learner_model_state_dict)
                 worker_name = "worker_" + str(i)
 
-                heartbeat = mp.Value("d", time.time())
+                heartbeat = mp.Value("f", time.time())
 
                 src_w = {
                     "target": Runner.worker_run,
@@ -196,8 +220,8 @@ class Runner:
             for wp in ChildProcess():
                 wp.start()
 
-            # for wp in ChildProcess():
-            #     wp.join()
+            for wp in ChildProcess():
+                wp.join()
 
         except:
             traceback.print_exc(limit=128)
@@ -205,8 +229,8 @@ class Runner:
             err, log_dir = Runner.extract_err("worker")
             SaveErrorLog(err, log_dir)
 
-            # for wp in ChildProcess():
-            #     wp.terminate()
+            for wp in ChildProcess():
+                wp.terminate()
 
     @register
     def learner_sub_process(self):
@@ -215,18 +239,26 @@ class Runner:
             self.Model.load_state_dict(learner_model_state_dict)
 
             mutex = Mutex()
-            queue = mp.Queue(1024)
+
+            # 학습을 위한 공유메모리 확보
+            shm_ref = reset_shared_memory(self.args, self.obs_shape)
 
             # TODO: 좋은 구조는 아님.
             shared_stat_array = mp.Array(
-                "d", 3
+                "f", 3
             )  # [global game counts, mean-epi-rew, activate]
 
-            heartbeat = mp.Value("d", time.time())
+            heartbeat = mp.Value("f", time.time())
 
             src_s = {
                 "target": Runner.storage_run,
-                "args": (self.args, mutex, DataFrameKeyword, queue, *self.obs_shape),
+                "args": (
+                    self.args,
+                    mutex,
+                    DataFrameKeyword,
+                    shm_ref,
+                    *self.obs_shape,
+                ),
                 "kwargs": {
                     "shared_stat_array": shared_stat_array,
                     "heartbeat": heartbeat,
@@ -242,11 +274,18 @@ class Runner:
             )  # child-processes
             ChildProcess().update({s: src_s})
 
-            heartbeat = mp.Value("d", time.time())
+            heartbeat = mp.Value("f", time.time())
 
             src_l = {
                 "target": Runner.run_learner,
-                "args": (self.Model, self.args, mutex, queue),
+                "args": (
+                    self.Model,
+                    self.LearnerCls,
+                    self.args,
+                    mutex,
+                    shm_ref,
+                    *self.obs_shape,
+                ),
                 "kwargs": {
                     "shared_stat_array": shared_stat_array,
                     "heartbeat": heartbeat,
@@ -266,10 +305,19 @@ class Runner:
             for lp in ChildProcess():
                 lp.start()
 
-            # run_learner(args, mutex, learner_model, queue, shared_stat_array=shared_stat_array)
+            # Runner.run_learner(
+            #     self.Model,
+            #     self.LearnerCls,
+            #     self.args,
+            #     mutex,
+            #     shm_ref,
+            #     *self.obs_shape,
+            #     shared_stat_array=shared_stat_array,
+            #     heartbeat=heartbeat,
+            # )
 
-            # for lp in ChildProcess():
-            #     lp.join()
+            for lp in ChildProcess():
+                lp.join()
 
         except:
             traceback.print_exc(limit=128)
@@ -277,11 +325,13 @@ class Runner:
             err, log_dir = Runner.extract_err("learner")
             SaveErrorLog(err, log_dir)
 
-            # for lp in ChildProcess():
-            #     lp.terminate()
+            for lp in ChildProcess():
+                lp.terminate()
 
     def start(self):
         def _monitor_child_process(restart_delay=60):
+            """사용하면 안 될 듯.. 문제가 있음"""
+
             def _restart_process(src, heartbeat):
                 # heartbeat 기록 갱신
                 heartbeat.value = time.time()
@@ -370,7 +420,7 @@ class Runner:
                 fn_dict[func_name](self)
             else:
                 assert False, f"Wronf func_name: {func_name}"
-            _monitor_child_process()
+            # _monitor_child_process()
 
         except Exception as e:
             print(f"error: {e}")
