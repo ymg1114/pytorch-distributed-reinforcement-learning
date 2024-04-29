@@ -110,6 +110,14 @@ class LearnerBase(SMInterFace):
                 "avg-ratio", detached_losses["ratio"].mean(), self.idx
             )
 
+        if "alpha_loss" in detached_losses:
+            self.writer.add_scalar(
+                "alpha_loss", detached_losses["alpha_loss"].mean(), self.idx
+            )
+
+        if "alpha" in detached_losses:
+            self.writer.add_scalar("alpha", detached_losses["alpha"], self.idx)
+
         # TODO: 좋은 형태의 구조는 아님
         if self.np_shared_stat_array is not None:
             assert self.np_shared_stat_array.size == 3
@@ -243,6 +251,12 @@ class LearnerSeperate(LearnerBase):
 
         self.actor_optimizer = Adam(self.actor.parameters(), lr=self.args.lr)
         self.critic_optimizer = Adam(self.critic.parameters(), lr=self.args.lr)
+
+        self.target_entropy = (
+            -self.args.action_space
+        )  # 보통 목표 엔트로피 값을 이렇게 설정한다 함..?
+        self.log_alpha = torch.tensor(np.log(self.args.alpha), requires_grad=True)
+        self.log_alpha_optimizer = Adam([self.log_alpha], lr=self.args.lr)
 
     def monitor_flag(func):
         first_return = [False]

@@ -44,7 +44,11 @@ async def learning(parent, timer: ExecutionTimer):
                         loss_policy = (
                             (
                                 act_probs_pol
-                                * (parent.args.alpha * log_probs_pol - min_q_pol)
+                                * (
+                                    parent.log_alpha.exp().detach().to(parent.device)
+                                    * log_probs_pol
+                                    - min_q_pol
+                                )
                             )[:, :-1]
                             .sum(-1)
                             .mean()
@@ -56,6 +60,18 @@ async def learning(parent, timer: ExecutionTimer):
                             parent.actor.parameters(), parent.args.max_grad_norm
                         )
                         parent.actor_optimizer.step()
+
+                        # alpha loss (auto-tuning)
+                        # 샘플링 확률 (act_probs_pol)을 곱하여 기대값 반영
+                        entropy_pol = (act_probs_pol * -log_probs_pol)[:, :-1].sum(-1)
+
+                        alpha_loss = (
+                            parent.log_alpha.exp().to(parent.device)
+                            * (entropy_pol.detach() - parent.target_entropy)
+                        ).mean()
+                        parent.log_alpha_optimizer.zero_grad()
+                        alpha_loss.backward()
+                        parent.log_alpha_optimizer.step()
 
                         with torch.no_grad():
                             # 현재 policy에서 샘플링, only to calculate "td_target"
@@ -72,7 +88,9 @@ async def learning(parent, timer: ExecutionTimer):
 
                             # 샘플링 확률 (act_probs_cri)을 곱하여 기대값 반영
                             sampled_soft_q = act_probs_cri * (
-                                min_tar_q_cri - parent.args.alpha * log_probs_cri
+                                min_tar_q_cri
+                                - parent.log_alpha.exp().detach().to(parent.device)
+                                * log_probs_cri
                             )
 
                             # Target Soft Q-value
@@ -109,12 +127,16 @@ async def learning(parent, timer: ExecutionTimer):
                         detached_losses = {
                             "policy-loss": loss_policy.detach().cpu(),
                             "value-loss": loss_value.detach().cpu(),
+                            "alpha_loss": alpha_loss.detach().cpu(),
+                            "alpha": parent.log_alpha.exp().detach().cpu().item(),
                         }
 
                         print(
-                            "original_value_loss: {:.5f} original_policy_loss: {:.5f}".format(
+                            "original_value_loss: {:.5f} original_policy_loss: {:.5f} alpha_loss: {:.5f} alpha: {:.5f}".format(
                                 detached_losses["value-loss"],
                                 detached_losses["policy-loss"],
+                                detached_losses["alpha_loss"],
+                                detached_losses["alpha"],
                             )
                         )
 
