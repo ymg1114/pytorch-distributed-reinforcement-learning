@@ -1,6 +1,6 @@
 {
     "env": "CartPole-v1",
-    "algo": "IMPALA",
+    "algo": "PPO",
     "result_dir": null,
     "model_dir": null,
     "need_conv": false,
@@ -9,7 +9,7 @@
     "is_gray": false,
     "hidden_size": 64,
     "time_horizon": 500,
-    "reward_scale": 0.01,
+    "reward_scale": 0.1,
     "seq_len": 5,
     "batch_size": 128,
     "gamma": 0.99,

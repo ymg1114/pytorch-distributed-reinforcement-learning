@@ -1,7 +1,3 @@
-import os, sys
-
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
 import uuid
 import time
 import zmq
@@ -9,28 +5,16 @@ import gym
 import torch
 import numpy as np
 
-from utils.utils import Protocol, encode, decode, obs_preprocess, W_IP
+from agents.worker_module.env_maker import EnvBase
 
-
-class Env:
-    def __init__(self, args):
-        self.args = args
-        self._env = gym.make(args.env)
-
-    def reset(self):
-        obs, _ = self._env.reset()
-        return obs_preprocess(obs, self.args.need_conv)
-
-    def step(self, act):
-        obs, rew, done, _, _ = self._env.step(act)
-        return obs_preprocess(obs, self.args.need_conv), rew, done
+from utils.utils import Protocol, encode, decode, W_IP
 
 
 class Worker:
     def __init__(self, args, model, worker_name, port, obs_shape, heartbeat=None):
         self.args = args
         self.device = args.device  # cpu
-        self.env = Env(args)
+        self.env = EnvBase(args)
 
         self.model = model.actor.to(torch.device("cpu"))
         self.worker_name = worker_name
@@ -99,7 +83,7 @@ class Worker:
             is_fir = True  # first frame
             for _ in range(self.args.time_horizon):
                 self.req_model()  # every-step
-                act, logits, lstm_hx_next = self.model.act(obs, lstm_hx)
+                act, log_prob, lstm_hx_next = self.model.act(obs, lstm_hx)
                 next_obs, rew, done = self.env.step(act.item())
 
                 self.epi_rew += rew
@@ -110,7 +94,8 @@ class Worker:
                     "rew": torch.from_numpy(
                         np.array([rew * self.args.reward_scale])
                     ),  # (1,)
-                    "logits": logits,
+                    # "logits": logits,
+                    "log_prob": log_prob.view(-1),  # (1,) / scalar
                     "is_fir": torch.FloatTensor([1.0 if is_fir else 0.0]),  # (1,),
                     "done": torch.FloatTensor([1.0 if done else 0.0]),  # (1,),
                     "hx": lstm_hx[0],  # (hidden,)

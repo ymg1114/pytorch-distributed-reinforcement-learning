@@ -23,7 +23,11 @@ from utils.utils import (
 from torch.optim import Adam, RMSprop
 
 from .storage_module.shared_batch import SMInterFace
-from . import ppo_awrapper, impala_awrapper, sac_awrapper
+from . import (
+    ppo_awrapper,
+    impala_awrapper,
+    sac_awrapper,
+)
 
 timer = ExecutionTimer(
     num_transition=Params.seq_len * Params.batch_size * 1
@@ -163,8 +167,11 @@ class LearnerBase(SMInterFace):
         )
         sh_act_bat = LearnerBase.copy_to_ndarray(self.sh_act_batch).reshape((bn, sq, 1))
         sh_rew_bat = LearnerBase.copy_to_ndarray(self.sh_rew_batch).reshape((bn, sq, 1))
-        sh_logits_bat = LearnerBase.copy_to_ndarray(self.sh_logits_batch).reshape(
-            (bn, sq, ac)
+        # sh_logits_bat = LearnerBase.copy_to_ndarray(self.sh_logits_batch).reshape(
+        #     (bn, sq, ac)
+        # )
+        sh_log_prob_bat = LearnerBase.copy_to_ndarray(self.sh_log_prob_batch).reshape(
+            (bn, sq, 1)
         )
         sh_is_fir_bat = LearnerBase.copy_to_ndarray(self.sh_is_fir_batch).reshape(
             (bn, sq, 1)
@@ -176,7 +183,8 @@ class LearnerBase(SMInterFace):
             to_torch(sh_obs_bat),
             to_torch(sh_act_bat),
             to_torch(sh_rew_bat),
-            to_torch(sh_logits_bat),
+            # to_torch(sh_logits_bat),
+            to_torch(sh_log_prob_bat),
             to_torch(sh_is_fir_bat),
             to_torch(sh_hx_bat),
             to_torch(sh_cx_bat),
@@ -297,7 +305,8 @@ class LearnerSeperate(LearnerBase):
         _sh_obs_batch = self.sh_obs_batch.reshape((buf, sq, *sha))[idx]
         _sh_act_batch = self.sh_act_batch.reshape((buf, sq, 1))[idx]
         _sh_rew_batch = self.sh_rew_batch.reshape((buf, sq, 1))[idx]
-        _sh_logits_batch = self.sh_logits_batch.reshape((buf, sq, ac))[idx]
+        # _sh_logits_batch = self.sh_logits_batch.reshape((buf, sq, ac))[idx]
+        _sh_log_prob_batch = self.sh_log_prob_batch.reshape((buf, sq, 1))[idx]
         _sh_is_fir_batch = self.sh_is_fir_batch.reshape((buf, sq, 1))[idx]
         _sh_hx_batch = self.sh_hx_batch.reshape((buf, sq, hs))[idx]
         _sh_cx_batch = self.sh_cx_batch.reshape((buf, sq, hs))[idx]
@@ -306,7 +315,8 @@ class LearnerSeperate(LearnerBase):
         sh_obs_bat = LearnerBase.copy_to_ndarray(_sh_obs_batch)
         sh_act_bat = LearnerBase.copy_to_ndarray(_sh_act_batch)
         sh_rew_bat = LearnerBase.copy_to_ndarray(_sh_rew_batch)
-        sh_logits_bat = LearnerBase.copy_to_ndarray(_sh_logits_batch)
+        # sh_logits_bat = LearnerBase.copy_to_ndarray(_sh_logits_batch)
+        sh_log_prob_bat = LearnerBase.copy_to_ndarray(_sh_log_prob_batch)
         sh_is_fir_bat = LearnerBase.copy_to_ndarray(_sh_is_fir_batch)
         sh_hx_bat = LearnerBase.copy_to_ndarray(_sh_hx_batch)
         sh_cx_bat = LearnerBase.copy_to_ndarray(_sh_cx_batch)
@@ -315,7 +325,8 @@ class LearnerSeperate(LearnerBase):
             to_torch(sh_obs_bat),
             to_torch(sh_act_bat),
             to_torch(sh_rew_bat),
-            to_torch(sh_logits_bat),
+            # to_torch(sh_logits_bat),
+            to_torch(sh_log_prob_bat),
             to_torch(sh_is_fir_bat),
             to_torch(sh_hx_bat),
             to_torch(sh_cx_bat),

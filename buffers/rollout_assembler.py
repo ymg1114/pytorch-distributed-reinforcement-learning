@@ -37,7 +37,8 @@ class RolloutAssembler:
         assert "obs" in data
         assert "act" in data
         assert "rew" in data
-        assert "logits" in data
+        # assert "logits" in data
+        assert "log_prob" in data
         assert "is_fir" in data
         assert "hx" in data
         assert "cx" in data

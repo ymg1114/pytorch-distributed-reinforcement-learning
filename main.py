@@ -4,17 +4,19 @@ import atexit
 import time
 import gym
 import copy
+
 import torch
 import traceback
 import asyncio
 import multiprocessing as mp
 
+from types import SimpleNamespace as SN
 from pathlib import Path
 from multiprocessing import Process
 from datetime import datetime
 
 from agents.storage_module.shared_batch import (
-    reset_shared_memory,
+    reset_shared_on_policy_memory,
     reset_shared_buffer_memory,
 )
 from agents.learner import LearnerSingle, LearnerSeperate
@@ -22,7 +24,12 @@ from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
 
-from networks.models import MlpLSTMSingle, MlpLSTMSeperate
+from networks.models import (
+    MlpLSTMSingle,
+    MlpLSTMSeperate,
+    MlpLSTMSingleContinuous,
+    MlpLSTMSeperateContinuous,
+)
 
 from utils.utils import (
     KillProcesses,
@@ -31,9 +38,9 @@ from utils.utils import (
     result_dir,
     model_dir,
     extract_file_num,
-    DataFrameKeyword,
     ChildProcess,
     IsExit,
+    ErrorComment,
 )
 from utils.lock import Mutex
 
@@ -67,25 +74,36 @@ class Runner:
         # only to get observation, action space
         env = gym.make(self.args.env)
         # env.seed(0)
-        self.n_outputs = env.action_space.n
+        self.n_outputs = (
+            env.action_space.n
+            if hasattr(env.action_space, "n")
+            else env.action_space.shape[0]
+        )
         self.args.action_space = self.n_outputs
         print("Action Space: ", self.n_outputs)
         print("Observation Space: ", env.observation_space.shape)
 
-        # 현재 openai-gym의 "CartPole-v1" 환경만 한정
+        # 이산 행동 분포 환경: openai-gym의 "CartPole-v1"
+        # 연속 행동 분포 환경: openai-gym의 "Pendulum-v1"
         assert not self.args.need_conv or len(env.observation_space.shape) <= 1
 
         module_switcher = {  # (learner_cls, model_cls)
-            "PPO": (LearnerSingle, MlpLSTMSingle),
-            "IMPALA": (LearnerSingle, MlpLSTMSingle),
-            "SAC": (LearnerSeperate, MlpLSTMSeperate),
+            "PPO": SN(learner_cls=LearnerSingle, model_cls=MlpLSTMSingle),
+            "PPO-Continuous": SN(
+                learner_cls=LearnerSingle, model_cls=MlpLSTMSingleContinuous
+            ),
+            "IMPALA": SN(learner_cls=LearnerSingle, model_cls=MlpLSTMSingle),
+            "SAC": SN(learner_cls=LearnerSeperate, model_cls=MlpLSTMSeperate),
+            "SAC-Continuous": SN(
+                learner_cls=LearnerSeperate, model_cls=MlpLSTMSeperateContinuous
+            ),  # TODO
         }
-        module_tuple = module_switcher.get(
-            self.args.algo, lambda: AssertionError("Should be PPO or IMPALA or SAC")
+        module_name_space = module_switcher.get(
+            self.args.algo, lambda: AssertionError(ErrorComment)
         )
 
-        LearnerCls = module_tuple[0]
-        ModelCls = module_tuple[1]
+        LearnerCls = module_name_space.learner_cls
+        ModelCls = module_name_space.model_cls
 
         self.obs_shape = [env.observation_space.shape[0]]
         env.close()
@@ -133,7 +151,6 @@ class Runner:
     def storage_run(
         args,
         mutex,
-        dataframe_keyword,
         shm_ref,
         *obs_shape,
         shared_stat_array=None,
@@ -142,7 +159,6 @@ class Runner:
         storage = LearnerStorage(
             args,
             mutex,
-            dataframe_keyword,
             shm_ref,
             obs_shape,
             shared_stat_array,
@@ -166,11 +182,13 @@ class Runner:
         )
         learning_chain_switcher = {
             "PPO": learner.learning_chain_ppo,
+            "PPO-Continuous": learner.learning_chain_ppo,
             "IMPALA": learner.learning_chain_impala,
             "SAC": learner.learning_chain_sac,
+            "SAC-Continuous": learner.learning_chain_sac,  # TODO
         }
         learning_chain = learning_chain_switcher.get(
-            args.algo, lambda: AssertionError("Should be PPO or IMPALA or SAC")
+            args.algo, lambda: AssertionError(ErrorComment)
         )
         asyncio.run(learning_chain())
 
@@ -245,12 +263,14 @@ class Runner:
 
             # 학습을 위한 공유메모리 확보
             shm_ref_switcher = {
-                "PPO": reset_shared_memory,
-                "IMPALA": reset_shared_memory,
+                "PPO": reset_shared_on_policy_memory,
+                "PPO-Continuous": reset_shared_on_policy_memory,
+                "IMPALA": reset_shared_on_policy_memory,
                 "SAC": reset_shared_buffer_memory,
+                "SAC-Continuous": reset_shared_buffer_memory,  # TODO
             }
             shm_ref_factory = shm_ref_switcher.get(
-                self.args.algo, lambda: AssertionError("Should be PPO or IMPALA or SAC")
+                self.args.algo, lambda: AssertionError(ErrorComment)
             )
             shm_ref = shm_ref_factory(self.args, self.obs_shape)
 
@@ -266,7 +286,6 @@ class Runner:
                 "args": (
                     self.args,
                     mutex,
-                    DataFrameKeyword,
                     shm_ref,
                     *self.obs_shape,
                 ),

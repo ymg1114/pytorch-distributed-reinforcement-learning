@@ -23,12 +23,14 @@ async def learning(parent, timer: ExecutionTimer):
             if batch_args is not None:
                 with timer.timer("learner-forward-time"):
                     # Basically, mini-batch-learning (batch, seq, feat)
-                    obs, act, rew, logits, is_fir, hx, cx = parent.to_gpu(*batch_args)
-                    behav_log_probs = (
-                        parent.CT(F.softmax(logits, dim=-1))
-                        .log_prob(act.squeeze(-1))
-                        .unsqueeze(-1)
+                    obs, act, rew, behav_log_probs, is_fir, hx, cx = parent.to_gpu(
+                        *batch_args
                     )
+                    # behav_log_probs = (
+                    #     parent.CT(F.softmax(logits, dim=-1))
+                    #     .log_prob(act.squeeze(-1))
+                    #     .unsqueeze(-1)
+                    # )
 
                     # epoch-learning
                     for _ in range(parent.args.K_epoch):

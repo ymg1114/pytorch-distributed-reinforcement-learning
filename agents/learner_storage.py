@@ -28,7 +28,6 @@ class LearnerStorage(SMInterFace):
         self,
         args,
         mutex,
-        dataframe_keyword,
         shm_ref,
         obs_shape,
         shared_stat_array=None,
@@ -37,7 +36,6 @@ class LearnerStorage(SMInterFace):
         super().__init__(shm_ref=shm_ref)
 
         self.args = args
-        self.dataframe_keyword = dataframe_keyword
         self.obs_shape = obs_shape
 
         self.mutex: Mutex = mutex
@@ -138,7 +136,8 @@ class LearnerStorage(SMInterFace):
             obs = rollout["obs"]
             act = rollout["act"]
             rew = rollout["rew"]
-            logits = rollout["logits"]
+            # logits = rollout["logits"]
+            log_prob = rollout["log_prob"]
             is_fir = rollout["is_fir"]
             hx = rollout["hx"]
             cx = rollout["cx"]
@@ -147,7 +146,8 @@ class LearnerStorage(SMInterFace):
             self.sh_obs_batch[sq * num * sha : sq * (num + 1) * sha] = flatten(obs)
             self.sh_act_batch[sq * num : sq * (num + 1)] = flatten(act)
             self.sh_rew_batch[sq * num : sq * (num + 1)] = flatten(rew)
-            self.sh_logits_batch[sq * num * ac : sq * (num + 1) * ac] = flatten(logits)
+            # self.sh_logits_batch[sq * num * ac : sq * (num + 1) * ac] = flatten(logits)
+            self.sh_log_prob_batch[sq * num : sq * (num + 1)] = flatten(log_prob)
             self.sh_is_fir_batch[sq * num : sq * (num + 1)] = flatten(is_fir)
             self.sh_hx_batch[sq * num * hs : sq * (num + 1) * hs] = flatten(hx)
             self.sh_cx_batch[sq * num * hs : sq * (num + 1) * hs] = flatten(cx)

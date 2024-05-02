@@ -50,7 +50,8 @@ DataFrameKeyword = [
     "obs_batch",
     "act_batch",
     "rew_batch",
-    "logits_batch",
+    # "logits_batch",
+    "log_prob_batch",
     "is_fir_batch",
     "hx_batch",
     "cx_batch",
@@ -61,6 +62,9 @@ DataFrameKeyword = [
 dt_string = datetime.now().strftime(f"[%d][%m][%Y]-%H_%M")
 result_dir = os.path.join("results", str(dt_string))
 model_dir = os.path.join(result_dir, "models")
+
+
+ErrorComment = "Should be PPO or IMPALA or SAC"
 
 
 LS_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
@@ -169,8 +173,7 @@ def SaveErrorLog(error: str, log_dir: str):
     return
 
 
-def obs_preprocess(obs, need_conv):
-    global Params
+def obs_preprocess(obs, need_conv=False):
     if need_conv:
         assert False, "현재 사용하지 않음. torchvision, torch 버전 문제 해결 필요."
         # if Params.gray:

@@ -2,10 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.distributions import Categorical
+from torch.distributions import Categorical, Normal
 
 
-class MlpLSTM(nn.Module):
+class MlpLSTMBase(nn.Module):
     def __init__(self, f, n_outputs, sequence_length, hidden_size):
         super().__init__()
         self.input_size = f
@@ -38,14 +38,19 @@ class MlpLSTM(nn.Module):
         x = self.body.forward(obs)  # x: (feat,)
         hx, cx = self.lstmcell(x, lstm_hxs)
 
-        logits = self.logits(hx)  # policy
-        _, dist = self.get_dist(logits)
+        dist = self.get_dist(hx)
+        action = dist.sample().detach()
+        return (
+            action,
+            # dist.logits.detach(),
+            dist.log_prob(action).detach(),
+            (hx.detach(), cx.detach()),
+        )
 
-        return dist.sample().detach(), dist.logits.detach(), (hx.detach(), cx.detach())
-
-    def get_dist(self, logits):
+    def get_dist(self, x):
+        logits = self.logits(x)
         probs = F.softmax(logits, dim=-1)  # logits: (batch, feat)
-        return probs, self.CT(probs)
+        return self.CT(probs)
 
     def forward(self, obs, lstm_hxs, behaviour_acts):
         batch, seq, *sha = obs.size()
@@ -62,26 +67,43 @@ class MlpLSTM(nn.Module):
         output = torch.stack(output, dim=1)  # (batch, seq, feat)
 
         value = self.value(output)  # (batch, seq, 1)
-        logits = self.logits(output)  # (batch, seq, num_acts)
+        dist = self.get_dist(output)  # (batch, seq, num_acts)
 
-        log_probs, entropy = self._forward_dist(logits, behaviour_acts)  # current
+        if isinstance(dist, Categorical):
+            behav_acts = behaviour_acts.squeeze(-1)
+        else:
+            assert isinstance(dist, Normal)
+            behav_acts = behaviour_acts
 
-        log_probs = log_probs.view(batch, seq, 1)
-        entropy = entropy.view(batch, seq, 1)
-        # value = value.view(batch, seq, 1)
-
-        return log_probs, entropy, value
-
-    def _forward_dist(self, logits, behaviour_acts):
-        _, dist = self.get_dist(logits)  # (batch, seq, num_acts)
-
-        log_probs = dist.log_prob(behaviour_acts.squeeze(-1))  # (batch, seq)
+        log_probs = dist.log_prob(behav_acts)
         entropy = dist.entropy()  # (batch, seq)
 
-        return log_probs, entropy
+        return (
+            log_probs.view(batch, seq, -1),
+            entropy.view(batch, seq, -1),
+            value.view(batch, seq, -1),
+        )
 
 
-class MlpLSTMActor(MlpLSTM):
+class MlpLSTMContinuous(MlpLSTMBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.NM = Normal
+
+    def after_torso(self):
+        super().after_torso()
+        self.logits_std = nn.Linear(
+            in_features=self.hidden_size, out_features=self.n_outputs
+        )
+
+    def get_dist(self, x):
+        mu = torch.tanh(self.logits(x))  # mu
+        std = F.softplus(self.logits_std(x))  # std
+        # std = torch.clamp(log_std, min=-20, max=2).exp()
+        return self.NM(mu, std)
+
+
+class MlpLSTMActor(MlpLSTMBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -110,7 +132,7 @@ class MlpLSTMActor(MlpLSTM):
         output = torch.stack(output, dim=1)  # (batch, seq, feat)
 
         logits = self.logits(output)  # (batch, seq, num_acts)
-        probs, _ = self.get_dist(logits)  # (batch, seq, num_acts)
+        probs = F.softmax(logits, dim=-1)  # (batch, seq, num_acts)
 
         # Have to deal with situation of 0.0 probabilities because we can't do log 0
         z = probs == 0.0  # mask
@@ -122,7 +144,11 @@ class MlpLSTMActor(MlpLSTM):
         )
 
 
-class MlpLSTMCritic(MlpLSTM):
+# TODO
+class MlpLSTMActorContinuous(MlpLSTMContinuous): ...
+
+
+class MlpLSTMCritic(MlpLSTMBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -172,14 +198,36 @@ class MlpLSTMDoubleCritic(nn.Module):
 
 
 class MlpLSTMSingle(nn.Module):
+    """Actor, Critic이 하나의 torso"""
+
     def __init__(self, *args, **kwargs):
         super().__init__()
-        self.actor = MlpLSTM(*args, **kwargs)
-        self.critic = self.actor  # 동일 메모리 주소 참조
+        self.actor = MlpLSTMBase(*args, **kwargs)
+        self.critic = self.actor  # TODO: 개선 필요.. 동일 메모리 주소 참조 / dummy-code
+
+
+class MlpLSTMSingleContinuous(nn.Module):
+    """Actor, Critic이 하나의 torso"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.actor = MlpLSTMContinuous(*args, **kwargs)
+        self.critic = self.actor  # TODO: 개선 필요.. 동일 메모리 주소 참조 / dummy-code
 
 
 class MlpLSTMSeperate(nn.Module):
+    """Actor, Critic이 별도의 분리된 torso"""
+
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.actor = MlpLSTMActor(*args, **kwargs)
+        self.critic = MlpLSTMDoubleCritic(*args, **kwargs)
+
+
+class MlpLSTMSeperateContinuous(nn.Module):
+    """Actor, Critic이 별도의 분리된 torso"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.actor = MlpLSTMActorContinuous(*args, **kwargs)
         self.critic = MlpLSTMDoubleCritic(*args, **kwargs)
