@@ -14,6 +14,7 @@ SAC-Continuous (TODO)
 
 ## Caution!
 Discrete Learning environment is configured to `CartPole-v1`.
+
 Continuous Learning environment is configured to `Pendulum-v1`.
 
 ## How to run
