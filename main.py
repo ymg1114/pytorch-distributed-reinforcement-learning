@@ -84,7 +84,7 @@ class Runner:
         print("Observation Space: ", env.observation_space.shape)
 
         # 이산 행동 분포 환경: openai-gym의 "CartPole-v1"
-        # 연속 행동 분포 환경: openai-gym의 "Pendulum-v1"
+        # 연속 행동 분포 환경: openai-gym의 "MountainCarContinuous-v0"
         assert not self.args.need_conv or len(env.observation_space.shape) <= 1
 
         module_switcher = {  # (learner_cls, model_cls)
@@ -96,7 +96,7 @@ class Runner:
             "SAC": SN(learner_cls=LearnerSeperate, model_cls=MlpLSTMSeperate),
             "SAC-Continuous": SN(
                 learner_cls=LearnerSeperate, model_cls=MlpLSTMSeperateContinuous
-            ),  # TODO
+            ),
         }
         module_name_space = module_switcher.get(
             self.args.algo, lambda: AssertionError(ErrorComment)
@@ -185,7 +185,7 @@ class Runner:
             "PPO-Continuous": learner.learning_chain_ppo,
             "IMPALA": learner.learning_chain_impala,
             "SAC": learner.learning_chain_sac,
-            "SAC-Continuous": learner.learning_chain_sac,  # TODO
+            "SAC-Continuous": learner.learning_chain_sac_continuous,
         }
         learning_chain = learning_chain_switcher.get(
             args.algo, lambda: AssertionError(ErrorComment)
@@ -267,7 +267,7 @@ class Runner:
                 "PPO-Continuous": reset_shared_on_policy_memory,
                 "IMPALA": reset_shared_on_policy_memory,
                 "SAC": reset_shared_buffer_memory,
-                "SAC-Continuous": reset_shared_buffer_memory,  # TODO
+                "SAC-Continuous": reset_shared_buffer_memory,
             }
             shm_ref_factory = shm_ref_switcher.get(
                 self.args.algo, lambda: AssertionError(ErrorComment)

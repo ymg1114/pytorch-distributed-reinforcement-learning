@@ -27,6 +27,7 @@ from . import (
     ppo_awrapper,
     impala_awrapper,
     sac_awrapper,
+    sac_continuous_awrapper,
 )
 
 timer = ExecutionTimer(
@@ -199,6 +200,9 @@ class LearnerBase(SMInterFace):
     @sac_awrapper(timer=timer)
     def learning_sac(self): ...
 
+    @sac_continuous_awrapper(timer=timer)
+    def learning_sac_continuous(self): ...
+
     def is_sh_ready(self):
         bn = self.args.batch_size
         val = self.sh_data_num.value
@@ -234,6 +238,14 @@ class LearnerBase(SMInterFace):
         self.batch_buffer = asyncio.Queue(1024)
         tasks = [
             asyncio.create_task(self.learning_sac()),
+            asyncio.create_task(self.put_batch_to_buffer_q()),
+        ]
+        await asyncio.gather(*tasks)
+
+    async def learning_chain_sac_continuous(self):
+        self.batch_buffer = asyncio.Queue(1024)
+        tasks = [
+            asyncio.create_task(self.learning_sac_continuous()),
             asyncio.create_task(self.put_batch_to_buffer_q()),
         ]
         await asyncio.gather(*tasks)

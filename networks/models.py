@@ -144,8 +144,68 @@ class MlpLSTMActor(MlpLSTMBase):
         )
 
 
-# TODO
-class MlpLSTMActorContinuous(MlpLSTMContinuous): ...
+class MlpLSTMActorContinuous(MlpLSTMContinuous):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def after_torso(self):
+        self.lstmcell = nn.LSTMCell(
+            input_size=self.hidden_size, hidden_size=self.hidden_size
+        )
+
+        # policy
+        self.logits = nn.Linear(
+            in_features=self.hidden_size, out_features=self.n_outputs
+        )
+        self.logits_log_std = nn.Linear(
+            in_features=self.hidden_size, out_features=self.n_outputs
+        )
+
+    def act(self, obs, lstm_hxs):
+        x = self.body.forward(obs)  # x: (feat,)
+        hx, cx = self.lstmcell(x, lstm_hxs)
+
+        action, log_prob = self.action_log_prob(hx)
+        return (
+            action.detach(),
+            # dist.logits.detach(),
+            log_prob.detach(),
+            (hx.detach(), cx.detach()),
+        )
+
+    def get_dist(self, x):
+        mu = self.logits(x)  # mu
+        log_std = torch.clamp(self.logits_log_std(x), min=-20, max=2)  # std
+        # std = torch.clamp(log_std, min=-20, max=2).exp()
+        return self.NM(mu, log_std.exp())
+
+    def action_log_prob(self, x):
+        dist = self.get_dist(x)
+        assert isinstance(dist, Normal)
+
+        x_t = dist.rsample()
+        action = torch.tanh(x_t)
+
+        log_prob = dist.log_prob(x_t)
+        log_prob -= torch.log(1 - action.pow(2) + 1e-7)
+        return action, log_prob
+
+    def forward(self, obs, lstm_hxs):
+        batch, seq, *sha = obs.size()
+        hx, cx = lstm_hxs
+
+        obs = obs.contiguous().view(batch * seq, *sha)
+        x = self.body.forward(obs)
+        x = x.view(batch, seq, self.hidden_size)  # (batch, seq, hidden_size)
+
+        output = []
+        for i in range(seq):
+            hx, cx = self.lstmcell(x[:, i], (hx, cx))
+            output.append(hx)
+        output = torch.stack(output, dim=1)  # (batch, seq, feat)
+
+        action, log_prob = self.action_log_prob(output)
+        return action.view(batch, seq, -1), log_prob.view(batch, seq, -1)
 
 
 class MlpLSTMCritic(MlpLSTMBase):
@@ -174,7 +234,7 @@ class MlpLSTMCritic(MlpLSTMBase):
 
         obs = obs.contiguous().view(batch * seq, *sha)
         x_o = self.body.forward(obs)
-        x_o = x_o.view(batch, seq, self.hidden_size)  # (batch, seq, hidden_size/2)
+        x_o = x_o.view(batch, seq, self.hidden_size)  # (batch, seq, hidden_size)
 
         output = []
         for i in range(seq):
@@ -185,6 +245,68 @@ class MlpLSTMCritic(MlpLSTMBase):
         q_value = self.q_value(output)  # (batch, seq, num_acts)
 
         return q_value.view(batch, seq, -1)
+
+
+class MlpLSTMCriticContinuous(MlpLSTMBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # obs-encoding / overriding
+        self.body = nn.Sequential(
+            nn.Linear(
+                in_features=self.input_size, out_features=int(self.hidden_size / 2)
+            ),
+            nn.ReLU(),
+        )
+
+    def after_torso(self):
+        self.lstmcell = nn.LSTMCell(
+            input_size=self.hidden_size, hidden_size=self.hidden_size
+        )
+        self.encode_action = nn.Sequential(
+            nn.Linear(in_features=1, out_features=int(self.hidden_size / 2)),
+            nn.ReLU(),
+        )
+        # q-value
+        self.q_value = nn.Linear(in_features=self.hidden_size, out_features=1)
+
+    def forward(self, obs, act, lstm_hxs):
+        batch, seq, *sha = obs.size()
+        hx, cx = lstm_hxs
+
+        obs = obs.contiguous().view(batch * seq, *sha)
+        x_o = self.body.forward(obs)
+        x_o = x_o.view(
+            batch, seq, int(self.hidden_size / 2)
+        )  # (batch, seq, hidden_size/2)
+
+        act = act.contiguous().view(batch * seq, -1)
+        x_a = self.encode_action.forward(act)
+        x_a = x_a.view(
+            batch, seq, int(self.hidden_size / 2)
+        )  # (batch, seq, hidden_size/2)
+
+        x = torch.cat([x_o, x_a], -1)
+
+        output = []
+        for i in range(seq):
+            hx, cx = self.lstmcell(x[:, i], (hx, cx))
+            output.append(hx)
+        output = torch.stack(output, dim=1)  # (batch, seq, feat)
+
+        q_value = self.q_value(output)  # (batch, seq, num_acts)
+
+        return q_value.view(batch, seq, -1)
+
+
+class MlpLSTMDoubleCriticContinuous(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.q1 = MlpLSTMCriticContinuous(*args, **kwargs)
+        self.q2 = MlpLSTMCriticContinuous(*args, **kwargs)
+
+    def forward(self, *args, **kwargs):
+        return self.q1(*args, **kwargs), self.q2(*args, **kwargs)
 
 
 class MlpLSTMDoubleCritic(nn.Module):
@@ -230,4 +352,4 @@ class MlpLSTMSeperateContinuous(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.actor = MlpLSTMActorContinuous(*args, **kwargs)
-        self.critic = MlpLSTMDoubleCritic(*args, **kwargs)
+        self.critic = MlpLSTMDoubleCriticContinuous(*args, **kwargs)
