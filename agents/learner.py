@@ -273,7 +273,7 @@ class LearnerSeperate(LearnerBase):
         self.critic_optimizer = Adam(self.critic.parameters(), lr=self.args.lr)
 
         self.target_entropy = (
-            -self.args.action_space
+            self.args.action_space
         )  # 보통 목표 엔트로피 값을 이렇게 설정한다 함..?
         self.log_alpha = torch.tensor(np.log(self.args.alpha), requires_grad=True)
         self.log_alpha_optimizer = Adam([self.log_alpha], lr=self.args.lr)

@@ -68,7 +68,7 @@ async def learning(parent, timer: ExecutionTimer):
                         entropy_pol = (act_probs_pol * -log_probs_pol)[:, :-1].sum(-1)
 
                         alpha_loss = (
-                            parent.log_alpha.exp().to(parent.device)
+                            -parent.log_alpha.exp().to(parent.device)
                             * (entropy_pol.detach() - parent.target_entropy)
                         ).mean()
                         parent.log_alpha_optimizer.zero_grad()
