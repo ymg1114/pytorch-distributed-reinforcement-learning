@@ -23,7 +23,7 @@ async def learning(parent, timer: ExecutionTimer):
             if batch_args is not None:
                 with timer.timer("learner-forward-time"):
                     # Basically, mini-batch-learning (batch, seq, feat)
-                    obs, act, rew, behav_log_probs, is_fir, hx, cx = parent.to_gpu(
+                    obs, act, rew, _, behav_log_probs, is_fir, hx, cx = parent.to_gpu(
                         *batch_args
                     )
                     # behav_log_probs = (
@@ -40,7 +40,7 @@ async def learning(parent, timer: ExecutionTimer):
                         )  # (batch, seq, hidden) -> (batch, hidden)
 
                         # on-line model forwarding
-                        log_probs, entropy, value = parent.model.actor(
+                        logits, log_probs, entropy, value = parent.model.actor(
                             obs,  # (batch, seq, *sha)
                             lstm_states,  # ((batch, hidden), (batch, hidden))
                             act,  # (batch, seq, 1)

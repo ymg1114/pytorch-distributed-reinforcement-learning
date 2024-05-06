@@ -50,7 +50,7 @@ DataFrameKeyword = [
     "obs_batch",
     "act_batch",
     "rew_batch",
-    # "logits_batch",
+    "logits_batch",
     "log_prob_batch",
     "is_fir_batch",
     "hx_batch",

@@ -40,9 +40,16 @@ class MlpLSTMBase(nn.Module):
 
         dist = self.get_dist(hx)
         action = dist.sample().detach()
+
+        # TODO: 좀 이상한 코드..
+        logits = (
+            dist.logits.detach()
+            if hasattr(dist, "logits")
+            else torch.zeros(action.shape)
+        )
         return (
             action,
-            # dist.logits.detach(),
+            logits,
             dist.log_prob(action).detach(),
             (hx.detach(), cx.detach()),
         )
@@ -78,7 +85,14 @@ class MlpLSTMBase(nn.Module):
         log_probs = dist.log_prob(behav_acts)
         entropy = dist.entropy()  # (batch, seq)
 
+        # TODO: 좀 이상한 코드..
+        logits = (
+            dist.logits.view(batch, seq, -1)
+            if hasattr(dist, "logits")
+            else torch.zeros(behaviour_acts.shape)
+        )
         return (
+            logits,
             log_probs.view(batch, seq, -1),
             entropy.view(batch, seq, -1),
             value.view(batch, seq, -1),
@@ -165,10 +179,17 @@ class MlpLSTMActorContinuous(MlpLSTMContinuous):
         x = self.body.forward(obs)  # x: (feat,)
         hx, cx = self.lstmcell(x, lstm_hxs)
 
-        action, log_prob = self.action_log_prob(hx)
+        dist, action, log_prob = self.action_log_prob(hx)
+
+        # TODO: 좀 이상한 코드..
+        logits = (
+            dist.logits.detach()
+            if hasattr(dist, "logits")
+            else torch.zeros(action.shape)
+        )
         return (
             action.detach(),
-            # dist.logits.detach(),
+            logits,
             log_prob.detach(),
             (hx.detach(), cx.detach()),
         )
@@ -188,7 +209,7 @@ class MlpLSTMActorContinuous(MlpLSTMContinuous):
 
         log_prob = dist.log_prob(x_t)
         log_prob -= torch.log(1 - action.pow(2) + 1e-7)
-        return action, log_prob
+        return dist, action, log_prob
 
     def forward(self, obs, lstm_hxs):
         batch, seq, *sha = obs.size()
@@ -204,7 +225,7 @@ class MlpLSTMActorContinuous(MlpLSTMContinuous):
             output.append(hx)
         output = torch.stack(output, dim=1)  # (batch, seq, feat)
 
-        action, log_prob = self.action_log_prob(output)
+        _, action, log_prob = self.action_log_prob(output)
         return action.view(batch, seq, -1), log_prob.view(batch, seq, -1)
 
 

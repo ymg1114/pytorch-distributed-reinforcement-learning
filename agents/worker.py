@@ -83,7 +83,7 @@ class Worker:
             is_fir = True  # first frame
             for _ in range(self.args.time_horizon):
                 self.req_model()  # every-step
-                act, log_prob, lstm_hx_next = self.model.act(obs, lstm_hx)
+                act, logits, log_prob, lstm_hx_next = self.model.act(obs, lstm_hx)
                 next_obs, rew, done = self.env.step(act.item())
 
                 self.epi_rew += rew
@@ -94,7 +94,7 @@ class Worker:
                     "rew": torch.from_numpy(
                         np.array([rew * self.args.reward_scale])
                     ),  # (1,)
-                    # "logits": logits,
+                    "logits": logits,
                     "log_prob": log_prob.view(-1),  # (1,) / scalar
                     "is_fir": torch.FloatTensor([1.0 if is_fir else 0.0]),  # (1,),
                     "done": torch.FloatTensor([1.0 if done else 0.0]),  # (1,),

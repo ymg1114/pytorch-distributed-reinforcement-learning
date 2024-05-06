@@ -1,4 +1,7 @@
 import torch
+import torch.nn.functional as F
+from torch.distributions import Categorical
+from torch.distributions.kl import kl_divergence
 
 
 def compute_gae(
@@ -66,3 +69,9 @@ def compute_v_trace(
 def soft_update(critic, target_critic, tau=0.005):
     for p, target_p in zip(critic.parameters(), target_critic.parameters()):
         target_p.data.copy_((1.0 - tau) * target_p.data + tau * p.data)
+
+
+def kldivergence(logits_p, logits_q):
+    dist_p = Categorical(F.softmax(logits_p, dim=-1))
+    dist_q = Categorical(F.softmax(logits_q, dim=-1))
+    return kl_divergence(dist_p, dist_q).squeeze()

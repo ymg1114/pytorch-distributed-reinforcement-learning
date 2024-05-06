@@ -23,9 +23,7 @@ async def learning(parent, timer: ExecutionTimer):
             if batch_args is not None:
                 with timer.timer("learner-forward-time"):
                     # Basically, mini-batch-learning (batch, seq, feat)
-                    obs, act, rew, behav_log_probs, is_fir, hx, cx = parent.to_gpu(
-                        *batch_args
-                    )
+                    obs, act, rew, _, _, is_fir, hx, cx = parent.to_gpu(*batch_args)
 
                     # epoch-learning
                     for _ in range(parent.args.K_epoch):
@@ -57,12 +55,12 @@ async def learning(parent, timer: ExecutionTimer):
                         parent.actor_optimizer.step()
 
                         # alpha loss (auto-tuning)
-                        alpha_loss = (
+                        loss_alpha = (
                             -parent.log_alpha.exp().to(parent.device)
                             * (-log_probs_pol[:, :-1].detach() - parent.target_entropy)
                         ).mean()
                         parent.log_alpha_optimizer.zero_grad()
-                        alpha_loss.backward()
+                        loss_alpha.backward()
                         parent.log_alpha_optimizer.step()
 
                         with torch.no_grad():
@@ -117,15 +115,15 @@ async def learning(parent, timer: ExecutionTimer):
                         detached_losses = {
                             "policy-loss": loss_policy.detach().cpu(),
                             "value-loss": loss_value.detach().cpu(),
-                            "alpha_loss": alpha_loss.detach().cpu(),
+                            "loss_alpha": loss_alpha.detach().cpu(),
                             "alpha": parent.log_alpha.exp().detach().cpu().item(),
                         }
 
                         print(
-                            "original_value_loss: {:.5f} original_policy_loss: {:.5f} alpha_loss: {:.5f} alpha: {:.5f}".format(
+                            "original_value_loss: {:.5f} original_policy_loss: {:.5f} loss_alpha: {:.5f} alpha: {:.5f}".format(
                                 detached_losses["value-loss"],
                                 detached_losses["policy-loss"],
-                                detached_losses["alpha_loss"],
+                                detached_losses["loss_alpha"],
                                 detached_losses["alpha"],
                             )
                         )

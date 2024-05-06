@@ -3,11 +3,12 @@ import zmq
 import time
 import torch
 import asyncio
-import torch.nn.functional as F
-import multiprocessing as mp
+
+# import torch.nn.functional as F
+# import multiprocessing as mp
 import numpy as np
 
-from torch.distributions import Categorical
+from torch.distributions import Categorical, Uniform
 from functools import partial
 
 from utils.lock import Mutex
@@ -25,6 +26,7 @@ from torch.optim import Adam, RMSprop
 from .storage_module.shared_batch import SMInterFace
 from . import (
     ppo_awrapper,
+    v_mpo_awrapper,
     impala_awrapper,
     sac_awrapper,
     sac_continuous_awrapper,
@@ -115,9 +117,14 @@ class LearnerBase(SMInterFace):
                 "avg-ratio", detached_losses["ratio"].mean(), self.idx
             )
 
-        if "alpha_loss" in detached_losses:
+        if "loss-temperature" in detached_losses:
             self.writer.add_scalar(
-                "alpha_loss", detached_losses["alpha_loss"].mean(), self.idx
+                "loss-temperature", detached_losses["loss-temperature"].mean(), self.idx
+            )
+
+        if "loss_alpha" in detached_losses:
+            self.writer.add_scalar(
+                "loss_alpha", detached_losses["loss_alpha"].mean(), self.idx
             )
 
         if "alpha" in detached_losses:
@@ -155,36 +162,67 @@ class LearnerBase(SMInterFace):
         )  # 학습용 데이터를 새로 생성하고, 공유메모리의 데이터 오염을 막기 위함.
         return dst
 
-    def get_batch_from_sh_memory(self):
+    def sample_wrapper(func):
+        def _wrap(self, sampling_method):
+            sq = self.args.seq_len
+            bn = self.args.batch_size
+            sha = self.obs_shape
+            # hs = self.args.hidden_size
+            # ac = self.args.action_space
+            buf = self.args.buffer_size
+
+            assert sampling_method in ("on-policy", "off-policy")
+
+            if sampling_method == "off-policy":
+                assert buf == int(
+                    self.sh_obs_batch.shape[0] / (sq * sha[0])
+                )  # TODO: 좋은 코드는 아닌 듯..
+                idx = np.random.randint(0, buf, size=bn)
+                num_buf = buf
+            else:
+                assert sampling_method == "on-policy"
+                assert bn == int(
+                    self.sh_obs_batch.shape[0] / (sq * sha[0])
+                )  # TODO: 좋은 코드는 아닌 듯..
+                idx = slice(None)  # ":"와 동일
+                num_buf = bn
+
+            return func(self, idx, num_buf)
+
+        return _wrap
+
+    @sample_wrapper
+    def sample_batch_from_sh_memory(self, idx, num_buf):
         sq = self.args.seq_len
-        bn = self.args.batch_size
+        # bn = self.args.batch_size
         sha = self.obs_shape
         hs = self.args.hidden_size
         ac = self.args.action_space
 
+        _sh_obs_batch = self.sh_obs_batch.reshape((num_buf, sq, *sha))[idx]
+        _sh_act_batch = self.sh_act_batch.reshape((num_buf, sq, 1))[idx]
+        _sh_rew_batch = self.sh_rew_batch.reshape((num_buf, sq, 1))[idx]
+        _sh_logits_batch = self.sh_logits_batch.reshape((num_buf, sq, ac))[idx]
+        _sh_log_prob_batch = self.sh_log_prob_batch.reshape((num_buf, sq, 1))[idx]
+        _sh_is_fir_batch = self.sh_is_fir_batch.reshape((num_buf, sq, 1))[idx]
+        _sh_hx_batch = self.sh_hx_batch.reshape((num_buf, sq, hs))[idx]
+        _sh_cx_batch = self.sh_cx_batch.reshape((num_buf, sq, hs))[idx]
+
         # (batch, seq, feat)
-        sh_obs_bat = LearnerBase.copy_to_ndarray(self.sh_obs_batch).reshape(
-            (bn, sq, *sha)
-        )
-        sh_act_bat = LearnerBase.copy_to_ndarray(self.sh_act_batch).reshape((bn, sq, 1))
-        sh_rew_bat = LearnerBase.copy_to_ndarray(self.sh_rew_batch).reshape((bn, sq, 1))
-        # sh_logits_bat = LearnerBase.copy_to_ndarray(self.sh_logits_batch).reshape(
-        #     (bn, sq, ac)
-        # )
-        sh_log_prob_bat = LearnerBase.copy_to_ndarray(self.sh_log_prob_batch).reshape(
-            (bn, sq, 1)
-        )
-        sh_is_fir_bat = LearnerBase.copy_to_ndarray(self.sh_is_fir_batch).reshape(
-            (bn, sq, 1)
-        )
-        sh_hx_bat = LearnerBase.copy_to_ndarray(self.sh_hx_batch).reshape((bn, sq, hs))
-        sh_cx_bat = LearnerBase.copy_to_ndarray(self.sh_cx_batch).reshape((bn, sq, hs))
+        sh_obs_bat = LearnerBase.copy_to_ndarray(_sh_obs_batch)
+        sh_act_bat = LearnerBase.copy_to_ndarray(_sh_act_batch)
+        sh_rew_bat = LearnerBase.copy_to_ndarray(_sh_rew_batch)
+        sh_logits_bat = LearnerBase.copy_to_ndarray(_sh_logits_batch)
+        sh_log_prob_bat = LearnerBase.copy_to_ndarray(_sh_log_prob_batch)
+        sh_is_fir_bat = LearnerBase.copy_to_ndarray(_sh_is_fir_batch)
+        sh_hx_bat = LearnerBase.copy_to_ndarray(_sh_hx_batch)
+        sh_cx_bat = LearnerBase.copy_to_ndarray(_sh_cx_batch)
 
         return (
             to_torch(sh_obs_bat),
             to_torch(sh_act_bat),
             to_torch(sh_rew_bat),
-            # to_torch(sh_logits_bat),
+            to_torch(sh_logits_bat),
             to_torch(sh_log_prob_bat),
             to_torch(sh_is_fir_bat),
             to_torch(sh_hx_bat),
@@ -193,6 +231,9 @@ class LearnerBase(SMInterFace):
 
     @ppo_awrapper(timer=timer)
     def learning_ppo(self): ...
+
+    @v_mpo_awrapper(timer=timer)
+    def learning_v_mpo(self): ...
 
     @impala_awrapper(timer=timer)
     def learning_impala(self): ...
@@ -211,7 +252,9 @@ class LearnerBase(SMInterFace):
     async def put_batch_to_batch_q(self):
         while True:
             if self.is_sh_ready():
-                batch_args = self.get_batch_from_sh_memory()
+                batch_args = self.sample_batch_from_sh_memory(
+                    sampling_method="on-policy"
+                )
                 await self.batch_queue.put(batch_args)
                 self.reset_data_num()  # 공유메모리 저장 인덱스 (batch_num) 초기화
                 print("batch is ready !")
@@ -222,6 +265,14 @@ class LearnerBase(SMInterFace):
         self.batch_queue = asyncio.Queue(1024)
         tasks = [
             asyncio.create_task(self.learning_ppo()),
+            asyncio.create_task(self.put_batch_to_batch_q()),
+        ]
+        await asyncio.gather(*tasks)
+
+    async def learning_chain_v_mpo(self):
+        self.batch_queue = asyncio.Queue(1024)
+        tasks = [
+            asyncio.create_task(self.learning_v_mpo()),
             asyncio.create_task(self.put_batch_to_batch_q()),
         ]
         await asyncio.gather(*tasks)
@@ -251,13 +302,47 @@ class LearnerBase(SMInterFace):
         await asyncio.gather(*tasks)
 
 
-class LearnerSingle(LearnerBase):
+class LearnerSinglePPO(LearnerBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         assert self.model.actor is self.model.critic  # 동일 메모리 주소 참조
         self.actor = self.model.actor.to(self.device)
         self.critic = self.model.critic.to(self.device)
+
+
+class LearnerSingleIMPALA(LearnerSinglePPO): ...
+
+
+class LearnerSingleVMPO(LearnerSinglePPO):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.log_eta = torch.tensor(
+            np.log(self.args.v_mpo_lagrange_multiplier_init), requires_grad=True
+        )
+        self.log_alpha = torch.tensor(
+            np.log(self.args.v_mpo_lagrange_multiplier_init), requires_grad=True
+        )
+
+        params = [
+            {"params": self.model.parameters()},
+            {"params": self.log_eta},
+            {"params": self.log_alpha},
+        ]
+        self.optimizer = RMSprop(
+            params, lr=self.args.lr, eps=1e-5
+        )  # 옵티마이저 오버라이드
+
+    def get_coef_alpha(self):
+        return (
+            Uniform(
+                torch.tensor(self.args.coef_alpha_below).log(),
+                torch.tensor(self.args.coef_alpha_upper).log(),
+            )
+            .sample()
+            .exp()
+        )
 
 
 class LearnerSeperate(LearnerBase):
@@ -300,54 +385,12 @@ class LearnerSeperate(LearnerBase):
         val = self.sh_data_num.value
         return True if val >= buf else False
 
-    def sample_rand_batch_from_sh_memory(self):
-        sq = self.args.seq_len
-        bn = self.args.batch_size
-        sha = self.obs_shape
-        hs = self.args.hidden_size
-        ac = self.args.action_space
-
-        buf = self.args.buffer_size
-        assert buf == int(
-            self.sh_obs_batch.shape[0] / (sq * sha[0])
-        )  # TODO: 좋은 코드는 아닌 듯..
-
-        idx = np.random.randint(0, buf, size=bn)
-
-        _sh_obs_batch = self.sh_obs_batch.reshape((buf, sq, *sha))[idx]
-        _sh_act_batch = self.sh_act_batch.reshape((buf, sq, 1))[idx]
-        _sh_rew_batch = self.sh_rew_batch.reshape((buf, sq, 1))[idx]
-        # _sh_logits_batch = self.sh_logits_batch.reshape((buf, sq, ac))[idx]
-        _sh_log_prob_batch = self.sh_log_prob_batch.reshape((buf, sq, 1))[idx]
-        _sh_is_fir_batch = self.sh_is_fir_batch.reshape((buf, sq, 1))[idx]
-        _sh_hx_batch = self.sh_hx_batch.reshape((buf, sq, hs))[idx]
-        _sh_cx_batch = self.sh_cx_batch.reshape((buf, sq, hs))[idx]
-
-        # (batch, seq, feat)
-        sh_obs_bat = LearnerBase.copy_to_ndarray(_sh_obs_batch)
-        sh_act_bat = LearnerBase.copy_to_ndarray(_sh_act_batch)
-        sh_rew_bat = LearnerBase.copy_to_ndarray(_sh_rew_batch)
-        # sh_logits_bat = LearnerBase.copy_to_ndarray(_sh_logits_batch)
-        sh_log_prob_bat = LearnerBase.copy_to_ndarray(_sh_log_prob_batch)
-        sh_is_fir_bat = LearnerBase.copy_to_ndarray(_sh_is_fir_batch)
-        sh_hx_bat = LearnerBase.copy_to_ndarray(_sh_hx_batch)
-        sh_cx_bat = LearnerBase.copy_to_ndarray(_sh_cx_batch)
-
-        return (
-            to_torch(sh_obs_bat),
-            to_torch(sh_act_bat),
-            to_torch(sh_rew_bat),
-            # to_torch(sh_logits_bat),
-            to_torch(sh_log_prob_bat),
-            to_torch(sh_is_fir_bat),
-            to_torch(sh_hx_bat),
-            to_torch(sh_cx_bat),
-        )
-
     async def put_batch_to_buffer_q(self):
         while True:
             if self.is_sh_ready():
-                batch_args = self.sample_rand_batch_from_sh_memory()
+                batch_args = self.sample_batch_from_sh_memory(
+                    sampling_method="off-policy"
+                )
                 await self.batch_buffer.put(batch_args)
                 print("batch is ready !")
 

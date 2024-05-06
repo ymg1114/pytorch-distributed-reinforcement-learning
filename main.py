@@ -19,7 +19,12 @@ from agents.storage_module.shared_batch import (
     reset_shared_on_policy_memory,
     reset_shared_buffer_memory,
 )
-from agents.learner import LearnerSingle, LearnerSeperate
+from agents.learner import (
+    LearnerSinglePPO,
+    LearnerSingleIMPALA,
+    LearnerSingleVMPO,
+    LearnerSeperate,
+)
 from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
 from buffers.manager import Manager
@@ -88,11 +93,12 @@ class Runner:
         assert not self.args.need_conv or len(env.observation_space.shape) <= 1
 
         module_switcher = {  # (learner_cls, model_cls)
-            "PPO": SN(learner_cls=LearnerSingle, model_cls=MlpLSTMSingle),
+            "PPO": SN(learner_cls=LearnerSinglePPO, model_cls=MlpLSTMSingle),
             "PPO-Continuous": SN(
-                learner_cls=LearnerSingle, model_cls=MlpLSTMSingleContinuous
+                learner_cls=LearnerSinglePPO, model_cls=MlpLSTMSingleContinuous
             ),
-            "IMPALA": SN(learner_cls=LearnerSingle, model_cls=MlpLSTMSingle),
+            "V-MPO": SN(learner_cls=LearnerSingleVMPO, model_cls=MlpLSTMSingle),
+            "IMPALA": SN(learner_cls=LearnerSingleIMPALA, model_cls=MlpLSTMSingle),
             "SAC": SN(learner_cls=LearnerSeperate, model_cls=MlpLSTMSeperate),
             "SAC-Continuous": SN(
                 learner_cls=LearnerSeperate, model_cls=MlpLSTMSeperateContinuous
@@ -183,6 +189,7 @@ class Runner:
         learning_chain_switcher = {
             "PPO": learner.learning_chain_ppo,
             "PPO-Continuous": learner.learning_chain_ppo,
+            "V-MPO": learner.learning_chain_v_mpo,
             "IMPALA": learner.learning_chain_impala,
             "SAC": learner.learning_chain_sac,
             "SAC-Continuous": learner.learning_chain_sac_continuous,
@@ -265,6 +272,7 @@ class Runner:
             shm_ref_switcher = {
                 "PPO": reset_shared_on_policy_memory,
                 "PPO-Continuous": reset_shared_on_policy_memory,
+                "V-MPO": reset_shared_on_policy_memory,
                 "IMPALA": reset_shared_on_policy_memory,
                 "SAC": reset_shared_buffer_memory,
                 "SAC-Continuous": reset_shared_buffer_memory,

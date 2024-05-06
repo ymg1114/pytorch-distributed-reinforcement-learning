@@ -6,7 +6,7 @@ PPO-Continuous
 
 IMPALA
 
-V-MPO (TODO)
+V-MPO
 
 SAC
 

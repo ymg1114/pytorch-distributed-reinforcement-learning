@@ -33,11 +33,11 @@ def setup_shared_memory(args, obs_shape, batch_size):
     rew_batch = np.zeros(args.seq_len * batch_size * 1, dtype=np.float32)  # scalar
     set_shared_memory(shm_ref, rew_batch, "rew_batch")
 
-    # logits_batch = np.zeros(
-    #     args.seq_len * batch_size * args.action_space,
-    #     dtype=np.float32,
-    # )  # action-space (logits)
-    # set_shared_memory(shm_ref, logits_batch, "logits_batch")
+    logits_batch = np.zeros(
+        args.seq_len * batch_size * args.action_space,
+        dtype=np.float32,
+    )  # action-space (logits)
+    set_shared_memory(shm_ref, logits_batch, "logits_batch")
 
     log_prob_batch = np.zeros(args.seq_len * batch_size * 1, dtype=np.float32)  # scalar
     set_shared_memory(shm_ref, log_prob_batch, "log_prob_batch")
@@ -93,7 +93,7 @@ class SMInterFace:
         self.sh_obs_batch = self.get_shared_memory("obs_batch")
         self.sh_act_batch = self.get_shared_memory("act_batch")
         self.sh_rew_batch = self.get_shared_memory("rew_batch")
-        # self.sh_logits_batch = self.get_shared_memory("logits_batch")
+        self.sh_logits_batch = self.get_shared_memory("logits_batch")
         self.sh_log_prob_batch = self.get_shared_memory("log_prob_batch")
         self.sh_is_fir_batch = self.get_shared_memory("is_fir_batch")
         self.sh_hx_batch = self.get_shared_memory("hx_batch")
