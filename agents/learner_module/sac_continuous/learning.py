@@ -14,7 +14,7 @@ async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_buffer")
     parent.idx = 0
 
-    while True:
+    while not parent.stop_event.is_set():
         batch_args = None
         with timer.timer("learner-throughput", check_throughput=True):
             with timer.timer("learner-batching-time"):

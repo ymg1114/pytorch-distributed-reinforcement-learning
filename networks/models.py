@@ -35,18 +35,19 @@ class MlpLSTMBase(nn.Module):
         )
 
     def act(self, obs, lstm_hxs):
-        x = self.body.forward(obs)  # x: (feat,)
-        hx, cx = self.lstmcell(x, lstm_hxs)
+        with torch.no_grad():
+            x = self.body.forward(obs)  # x: (feat,)
+            hx, cx = self.lstmcell(x, lstm_hxs)
 
-        dist = self.get_dist(hx)
-        action = dist.sample().detach()
+            dist = self.get_dist(hx)
+            action = dist.sample().detach()
 
-        # TODO: 좀 이상한 코드..
-        logits = (
-            dist.logits.detach()
-            if hasattr(dist, "logits")
-            else torch.zeros(action.shape)
-        )
+            # TODO: 좀 이상한 코드..
+            logits = (
+                dist.logits.detach()
+                if hasattr(dist, "logits")
+                else torch.zeros(action.shape)
+            )
         return (
             action,
             logits,
@@ -176,17 +177,18 @@ class MlpLSTMActorContinuous(MlpLSTMContinuous):
         )
 
     def act(self, obs, lstm_hxs):
-        x = self.body.forward(obs)  # x: (feat,)
-        hx, cx = self.lstmcell(x, lstm_hxs)
+        with torch.no_grad():
+            x = self.body.forward(obs)  # x: (feat,)
+            hx, cx = self.lstmcell(x, lstm_hxs)
 
-        dist, action, log_prob = self.action_log_prob(hx)
+            dist, action, log_prob = self.action_log_prob(hx)
 
-        # TODO: 좀 이상한 코드..
-        logits = (
-            dist.logits.detach()
-            if hasattr(dist, "logits")
-            else torch.zeros(action.shape)
-        )
+            # TODO: 좀 이상한 코드..
+            logits = (
+                dist.logits.detach()
+                if hasattr(dist, "logits")
+                else torch.zeros(action.shape)
+            )
         return (
             action.detach(),
             logits,

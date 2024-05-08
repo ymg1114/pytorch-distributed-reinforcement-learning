@@ -29,6 +29,7 @@ class LearnerStorage(SMInterFace):
         args,
         mutex,
         shm_ref,
+        stop_event,
         obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -36,6 +37,7 @@ class LearnerStorage(SMInterFace):
         super().__init__(shm_ref=shm_ref)
 
         self.args = args
+        self.stop_event = stop_event
         self.obs_shape = obs_shape
 
         self.mutex: Mutex = mutex
@@ -51,7 +53,8 @@ class LearnerStorage(SMInterFace):
         self.get_shared_memory_interface()
 
     def __del__(self):  # 소멸자
-        self.sub_socket.close()
+        if hasattr(self, "sub_socket"):
+            self.sub_socket.close()
 
     def zeromq_set(self):
         context = zmq.asyncio.Context()
@@ -71,7 +74,7 @@ class LearnerStorage(SMInterFace):
         await asyncio.gather(*tasks)
 
     async def retrieve_rollout_from_worker(self):
-        while True:
+        while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if protocol is Protocol.Rollout:
                 await self.rollout_assembler.push(data)
@@ -86,7 +89,7 @@ class LearnerStorage(SMInterFace):
             await asyncio.sleep(0.001)
 
     async def build_as_batch(self):
-        while True:
+        while not self.stop_event.is_set():
             if self.heartbeat is not None:
                 self.heartbeat.value = time.time()
 

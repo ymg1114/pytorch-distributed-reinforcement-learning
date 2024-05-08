@@ -32,14 +32,14 @@ def compute_v_trace(
     # Importance sampling weights (rho)
     rho = torch.exp(
         target_log_probs[:, :-1] - behav_log_probs[:, :-1]
-    ).detach()  # a/b == exp(log(a)-log(b))
+    )  # a/b == exp(log(a)-log(b))
     # rho_clipped = torch.clamp(rho, max=rho_bar)
     rho_clipped = torch.clamp(rho, min=0.1, max=rho_bar)
 
     # truncated importance weights (c)
     c = torch.exp(
         target_log_probs[:, :-1] - behav_log_probs[:, :-1]
-    ).detach()  # a/b == exp(log(a)-log(b))
+    )  # a/b == exp(log(a)-log(b))
     c_clipped = torch.clamp(c, max=c_bar)
 
     td_target = rewards[:, :-1] + gamma * (1 - is_fir[:, 1:]) * values[:, 1:]
@@ -63,7 +63,7 @@ def compute_v_trace(
         - values[:, :-1]
     )
 
-    return rho_clipped, advantages.detach(), values_target.detach()
+    return rho_clipped, advantages, values_target
 
 
 def soft_update(critic, target_critic, tau=0.005):

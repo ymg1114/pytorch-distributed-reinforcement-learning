@@ -14,7 +14,7 @@ class EnvBase:
 
     def action_preprocess(func):
         def _wrapper(self, act):
-            action = act if "CartPole" in self._env.spec.name else [act]
+            action = act if "CartPole" in self._env.spec.id else [act]
             return func(self, action)
 
         return _wrapper

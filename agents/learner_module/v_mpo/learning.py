@@ -15,7 +15,7 @@ async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_queue")
     parent.idx = 0
 
-    while True:
+    while not parent.stop_event.is_set():
         batch_args = None
         with timer.timer("learner-throughput", check_throughput=True):
             with timer.timer("learner-batching-time"):
@@ -46,27 +46,26 @@ async def learning(parent, timer: ExecutionTimer):
                             lstm_states,  # ((batch, hidden), (batch, hidden))
                             act,  # (batch, seq, 1)
                         )
-
-                        td_target = (
-                            rew[:, :-1]
-                            + parent.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
-                        )
-                        delta = td_target - value[:, :-1]
-                        delta = delta.detach()
-
-                        gae = compute_gae(
-                            delta, parent.args.gamma, parent.args.lmbda
-                        )  # gae (advantage)
-
-                        eta = parent.log_eta.exp().detach()
-                        top_gae, top_idx = (
-                            torch.topk(  # top 50% in batch-dim (not, seq-dim)
-                                gae, math.ceil(gae.size(0) / 2), 0
+                        with torch.no_grad():
+                            td_target = (
+                                rew[:, :-1]
+                                + parent.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
                             )
-                        )
-                        top_log_probs = log_probs[:, :-1].gather(0, top_idx)
+                            delta = td_target - value[:, :-1]
 
-                        ratio = top_gae / (eta + 1e-7)
+                            gae = compute_gae(
+                                delta, parent.args.gamma, parent.args.lmbda
+                            )  # gae (advantage)
+
+                            top_gae, top_idx = (
+                                torch.topk(  # top 50% in batch-dim (not, seq-dim)
+                                    gae, math.ceil(gae.size(0) / 2), 0
+                                )
+                            )
+
+                            ratio = top_gae / (parent.log_eta.exp().detach() + 1e-7)
+
+                        top_log_probs = log_probs[:, :-1].gather(0, top_idx)
 
                         psi = F.softmax(
                             ratio.view(-1), 0
@@ -76,7 +75,7 @@ async def learning(parent, timer: ExecutionTimer):
 
                         loss_value = (
                             F.smooth_l1_loss(  # TODO: v-mpo는 조금 다른 거 같은데..
-                                value[:, :-1], td_target.detach()
+                                value[:, :-1], td_target
                             ).mean()
                         )
 

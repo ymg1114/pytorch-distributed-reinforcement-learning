@@ -9,8 +9,9 @@ from utils.utils import Protocol, encode, decode, M_IP
 
 
 class Manager:
-    def __init__(self, args, worker_port, obs_shape):
+    def __init__(self, args, stop_event, worker_port, obs_shape):
         self.args = args
+        self.stop_event = stop_event
         self.obs_shape = obs_shape
 
         self.data_q = deque(maxlen=1024)
@@ -21,8 +22,10 @@ class Manager:
         self.zeromq_set(worker_port)
 
     def __del__(self):  # 소멸자
-        self.sub_socket.close()
-        self.pub_socket.close()
+        if hasattr(self, "pub_socket"):
+            self.pub_socket.close()
+        if hasattr(self, "sub_socket"):
+            self.sub_socket.close()
 
     def zeromq_set(self, worker_port):
         context = zmq.asyncio.Context()
@@ -37,7 +40,7 @@ class Manager:
         self.pub_socket.connect(f"tcp://{M_IP}:{self.args.learner_port}")
 
     async def sub_data(self):
-        while True:
+        while not self.stop_event.is_set():
             protocol, data = decode(*await self.sub_socket.recv_multipart())
             if len(self.data_q) == self.data_q.maxlen:
                 self.data_q.popleft()  # FIFO
@@ -48,7 +51,7 @@ class Manager:
     async def pub_data(self):
         stat_pub_num = 0  # 지역 변수
 
-        while True:
+        while not self.stop_event.is_set():
             if len(self.data_q) > 0:
                 protocol, data = self.data_q.popleft()  # FIFO
                 if protocol is Protocol.Rollout:

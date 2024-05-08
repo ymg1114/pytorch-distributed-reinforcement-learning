@@ -14,7 +14,7 @@ async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_queue")
     parent.idx = 0
 
-    while True:
+    while not parent.stop_event.is_set():
         batch_args = None
         with timer.timer("learner-throughput", check_throughput=True):
             with timer.timer("learner-batching-time"):
@@ -45,16 +45,16 @@ async def learning(parent, timer: ExecutionTimer):
                             lstm_states,  # ((batch, hidden), (batch, hidden))
                             act,  # (batch, seq, 1)
                         )
-
-                        # V-trace를 사용하여 off-policy corrections 연산
-                        ratio, advantages, values_target = compute_v_trace(
-                            behav_log_probs=behav_log_probs,
-                            target_log_probs=log_probs,
-                            is_fir=is_fir,
-                            rewards=rew,
-                            values=value,
-                            gamma=parent.args.gamma,
-                        )
+                        with torch.no_grad():
+                            # V-trace를 사용하여 off-policy corrections 연산
+                            ratio, advantages, values_target = compute_v_trace(
+                                behav_log_probs=behav_log_probs,
+                                target_log_probs=log_probs,
+                                is_fir=is_fir,
+                                rewards=rew,
+                                values=value,
+                                gamma=parent.args.gamma,
+                            )
 
                         loss_policy = -(log_probs[:, :-1] * advantages).mean()
                         loss_value = F.smooth_l1_loss(

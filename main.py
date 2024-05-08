@@ -92,6 +92,8 @@ class Runner:
         # 연속 행동 분포 환경: openai-gym의 "MountainCarContinuous-v0"
         assert not self.args.need_conv or len(env.observation_space.shape) <= 1
 
+        self.stop_event = mp.Event()
+
         module_switcher = {  # (learner_cls, model_cls)
             "PPO": SN(learner_cls=LearnerSinglePPO, model_cls=MlpLSTMSingle),
             "PPO-Continuous": SN(
@@ -149,15 +151,20 @@ class Runner:
         return traceback.format_exc(limit=128), log_dir
 
     @staticmethod
-    def worker_run(model, worker_name, args, port, *obs_shape, heartbeat=None):
-        worker = Worker(args, model, worker_name, port, obs_shape, heartbeat)
-        worker.collect_rolloutdata()  # collect rollout
+    def worker_run(
+        model, worker_name, stop_event, args, port, *obs_shape, heartbeat=None
+    ):
+        worker = Worker(
+            args, model, worker_name, stop_event, port, obs_shape, heartbeat
+        )
+        asyncio.run(worker.life_cycle_chain())  # collect rollout
 
     @staticmethod
     def storage_run(
         args,
         mutex,
         shm_ref,
+        stop_event,
         *obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -166,6 +173,7 @@ class Runner:
             args,
             mutex,
             shm_ref,
+            stop_event,
             obs_shape,
             shared_stat_array,
             heartbeat,
@@ -179,12 +187,20 @@ class Runner:
         args,
         mutex,
         shm_ref,
+        stop_event,
         *obs_shape,
         shared_stat_array=None,
         heartbeat=None,
     ):
         learner = learner_cls(
-            args, mutex, learner_model, shm_ref, obs_shape, shared_stat_array, heartbeat
+            args,
+            mutex,
+            learner_model,
+            shm_ref,
+            stop_event,
+            obs_shape,
+            shared_stat_array,
+            heartbeat,
         )
         learning_chain_switcher = {
             "PPO": learner.learning_chain_ppo,
@@ -202,9 +218,14 @@ class Runner:
     @register
     def manager_sub_process(self):
         try:
-            manager = Manager(self.args, self.args.worker_port, self.obs_shape)
+            manager = Manager(
+                self.args, self.stop_event, self.args.worker_port, self.obs_shape
+            )
             asyncio.run(manager.data_chain())
         except:
+            # 자식 프로세스 종료 신호 보냄
+            self.stop_event.set()
+
             traceback.print_exc(limit=128)
 
             err, log_dir = Runner.extract_err("manager")
@@ -228,6 +249,7 @@ class Runner:
                     "args": (
                         worker_model,
                         worker_name,
+                        self.stop_event,
                         self.args,
                         self.args.worker_port,
                         *self.obs_shape,
@@ -252,6 +274,9 @@ class Runner:
                 wp.join()
 
         except:
+            # 자식 프로세스 종료 신호 보냄
+            self.stop_event.set()
+
             traceback.print_exc(limit=128)
 
             err, log_dir = Runner.extract_err("worker")
@@ -295,6 +320,7 @@ class Runner:
                     self.args,
                     mutex,
                     shm_ref,
+                    self.stop_event,
                     *self.obs_shape,
                 ),
                 "kwargs": {
@@ -322,6 +348,7 @@ class Runner:
                     self.args,
                     mutex,
                     shm_ref,
+                    self.stop_event,
                     *self.obs_shape,
                 ),
                 "kwargs": {
@@ -358,6 +385,9 @@ class Runner:
                 lp.join()
 
         except:
+            # 자식 프로세스 종료 신호 보냄
+            self.stop_event.set()
+
             traceback.print_exc(limit=128)
 
             err, log_dir = Runner.extract_err("learner")
@@ -367,63 +397,63 @@ class Runner:
                 lp.terminate()
 
     def start(self):
-        def _monitor_child_process(restart_delay=60):
-            """사용하면 안 될 듯.. 문제가 있음"""
+        # def _monitor_child_process(restart_delay=60):
+        #     """사용하면 안 될 듯.. 문제가 있음"""
 
-            def _restart_process(src, heartbeat):
-                # heartbeat 기록 갱신
-                heartbeat.value = time.time()
+        #     def _restart_process(src, heartbeat):
+        #         # heartbeat 기록 갱신
+        #         heartbeat.value = time.time()
 
-                # src.update({"heartbeat": heartbeat})
-                # kwargs = src.get("kwargs")
-                # if "heartbeat" in kwargs:
-                #     kwargs["heartbeat"] = heartbeat
+        #         # src.update({"heartbeat": heartbeat})
+        #         # kwargs = src.get("kwargs")
+        #         # if "heartbeat" in kwargs:
+        #         #     kwargs["heartbeat"] = heartbeat
 
-                is_model_reload = src.get("is_model_reload")
-                if is_model_reload is not None and is_model_reload is True:
-                    model = copy.deepcopy(self.Model)
-                    model.load_state_dict(self.set_model_weight(self.args.model_dir))
+        #         is_model_reload = src.get("is_model_reload")
+        #         if is_model_reload is not None and is_model_reload is True:
+        #             model = copy.deepcopy(self.Model)
+        #             model.load_state_dict(self.set_model_weight(self.args.model_dir))
 
-                    args = list(src.get("args"))
-                    args[0] = model  # TODO: 하드 코딩 규칙. 첫 번째 인덱스가 모델일 것.
+        #             args = list(src.get("args"))
+        #             args[0] = model  # TODO: 하드 코딩 규칙. 첫 번째 인덱스가 모델일 것.
 
-                    src.update({"args": tuple(args)})
+        #             src.update({"args": tuple(args)})
 
-                new_p = Process(
-                    target=src.get("target"),
-                    args=src.get("args"),
-                    kwargs=src.get("kwargs"),
-                    daemon=True,
-                )  # child-processes
-                new_p.start()
-                ChildProcess().update({new_p: src})
+        #         new_p = Process(
+        #             target=src.get("target"),
+        #             args=src.get("args"),
+        #             kwargs=src.get("kwargs"),
+        #             daemon=True,
+        #         )  # child-processes
+        #         new_p.start()
+        #         ChildProcess().update({new_p: src})
 
-                time.sleep(0.5)
+        #         time.sleep(0.5)
 
-            while True:
-                for p in list(ChildProcess().keys()):
-                    src = ChildProcess().get(p)
+        #     while True:
+        #         for p in list(ChildProcess().keys()):
+        #             src = ChildProcess().get(p)
 
-                    heartbeat = src.get("heartbeat")
-                    assert heartbeat is not None
+        #             heartbeat = src.get("heartbeat")
+        #             assert heartbeat is not None
 
-                    # 자식 프로세스가 죽었거나, 일정 시간 이상 통신이 안된 경우 -> 재시작
-                    if not p.is_alive() or (
-                        (time.time() - heartbeat.value) > restart_delay
-                    ):
-                        # 해당 자식 프로세스 종료
-                        p.terminate()
-                        p.join()
-                        ChildProcess().pop(p)
-                        assert not p.is_alive(), f"p: {p}"
+        #             # 자식 프로세스가 죽었거나, 일정 시간 이상 통신이 안된 경우 -> 재시작
+        #             if not p.is_alive() or (
+        #                 (time.time() - heartbeat.value) > restart_delay
+        #             ):
+        #                 # 해당 자식 프로세스 종료
+        #                 p.terminate()
+        #                 p.join()
+        #                 ChildProcess().pop(p)
+        #                 assert not p.is_alive(), f"p: {p}"
 
-                        # 해당 자식 프로세스 신규 생성 및 시작
-                        _restart_process(src, heartbeat)
+        #                 # 해당 자식 프로세스 신규 생성 및 시작
+        #                 _restart_process(src, heartbeat)
 
-                if IsExit()[0]:
-                    break
+        #         if IsExit()[0]:
+        #             break
 
-                time.sleep(1.0)
+        #         time.sleep(1.0)
 
         assert len(sys.argv) == 2
         func_name = sys.argv[1]
@@ -440,7 +470,7 @@ class Runner:
                 for p in processes:
                     if p.is_alive():
                         p.terminate()
-                    p.join()
+                        p.join()
 
             # 종료 시그널 핸들러 설정
             def signal_handler(signum, frame):
@@ -461,14 +491,16 @@ class Runner:
             # _monitor_child_process()
 
         except Exception as e:
+            # 자식 프로세스 종료 신호 보냄
+            self.stop_event.set()
+
             print(f"error: {e}")
             traceback.print_exc(limit=128)
 
             for p in ChildProcess():
-                p.terminate()
-
-            for p in ChildProcess():
-                p.join()
+                if p.is_alive():
+                    p.terminate()
+                    p.join()
 
         finally:
             KillProcesses(os.getpid())

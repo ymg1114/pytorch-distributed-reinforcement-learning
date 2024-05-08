@@ -14,7 +14,7 @@ async def learning(parent, timer: ExecutionTimer):
     assert hasattr(parent, "batch_queue")
     parent.idx = 0
 
-    while True:
+    while not parent.stop_event.is_set():
         batch_args = None
         with timer.timer("learner-throughput", check_throughput=True):
             with timer.timer("learner-batching-time"):
@@ -45,17 +45,16 @@ async def learning(parent, timer: ExecutionTimer):
                             lstm_states,  # ((batch, hidden), (batch, hidden))
                             act,  # (batch, seq, 1)
                         )
+                        with torch.no_grad():
+                            td_target = (
+                                rew[:, :-1]
+                                + parent.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
+                            )
+                            delta = td_target - value[:, :-1]
 
-                        td_target = (
-                            rew[:, :-1]
-                            + parent.args.gamma * (1 - is_fir[:, 1:]) * value[:, 1:]
-                        )
-                        delta = td_target - value[:, :-1]
-                        delta = delta.detach()
-
-                        gae = compute_gae(
-                            delta, parent.args.gamma, parent.args.lmbda
-                        )  # ppo-gae (advantage)
+                            gae = compute_gae(
+                                delta, parent.args.gamma, parent.args.lmbda
+                            )  # ppo-gae (advantage)
 
                         ratio = torch.exp(
                             log_probs[:, :-1] - behav_log_probs[:, :-1]
@@ -72,9 +71,7 @@ async def learning(parent, timer: ExecutionTimer):
                         )
 
                         loss_policy = -torch.min(surr1, surr2).mean()
-                        loss_value = F.smooth_l1_loss(
-                            value[:, :-1], td_target.detach()
-                        ).mean()
+                        loss_value = F.smooth_l1_loss(value[:, :-1], td_target).mean()
                         policy_entropy = entropy[:, :-1].mean()
 
                         loss = (

@@ -44,6 +44,7 @@ class LearnerBase(SMInterFace):
         mutex,
         model,
         shm_ref,
+        stop_event,
         obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -51,6 +52,7 @@ class LearnerBase(SMInterFace):
         super().__init__(shm_ref=shm_ref)
         self.args = args
         self.mutex: Mutex = mutex
+        self.stop_event = stop_event
         self.obs_shape = obs_shape
 
         if shared_stat_array is not None:
@@ -76,7 +78,8 @@ class LearnerBase(SMInterFace):
         self.writer = SummaryWriter(log_dir=args.result_dir)  # tensorboard-log
 
     def __del__(self):  # 소멸자
-        self.pub_socket.close()
+        if hasattr(self, "pub_socket"):
+            self.pub_socket.close()
 
     def zeromq_set(self):
         context = zmq.Context()
@@ -250,7 +253,7 @@ class LearnerBase(SMInterFace):
         return True if val >= bn else False
 
     async def put_batch_to_batch_q(self):
-        while True:
+        while not self.stop_event.is_set():
             if self.is_sh_ready():
                 batch_args = self.sample_batch_from_sh_memory(
                     sampling_method="on-policy"
@@ -386,7 +389,7 @@ class LearnerSeperate(LearnerBase):
         return True if val >= buf else False
 
     async def put_batch_to_buffer_q(self):
-        while True:
+        while not self.stop_event.is_set():
             if self.is_sh_ready():
                 batch_args = self.sample_batch_from_sh_memory(
                     sampling_method="off-policy"
