@@ -2,7 +2,7 @@ import os, sys
 import signal
 import atexit
 import time
-import gym
+import gymnasium as gym
 import copy
 
 import torch
@@ -60,6 +60,7 @@ def register(fn):
 
 class Runner:
     def __init__(self):
+        mp.set_start_method('spawn')
         self.args = Params
         self.args.device = torch.device(
             f"cuda:{Params.gpu_idx}" if torch.cuda.is_available() else "cpu"

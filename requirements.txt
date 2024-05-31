@@ -1,18 +1,16 @@
-zmq
-pyzmq==26.0.3
+pyzmq
 blosc2
-gym==0.26.2
+gymnasium
 gym[atari]
 Box2D
-ale-py==0.8.1
-atari-py==0.2.9
-numpy==1.24.4
+ale-py
+atari-py
+numpy
 pickle
-pathlib
 opencv-python
 torch
 # torchvision
 tensorboard==2.8.0
-tensorflow == 2.8.0
-tensorflow-gpu == 2.8.0
+tensorflow==2.8.0
+tensorflow-gpu==2.8.0
 tensorboardX

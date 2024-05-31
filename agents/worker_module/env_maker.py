@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 
 from utils.utils import obs_preprocess
 
