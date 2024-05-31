@@ -63,11 +63,11 @@ async def learning(parent, timer: ExecutionTimer):
 
                         # alpha loss (auto-tuning)
                         # 샘플링 확률 (act_probs_pol)을 곱하여 기대값 반영
-                        entropy_pol = (act_probs_pol * -log_probs_pol)[:, :-1].sum(-1)
+                        entropy_pol = (act_probs_pol * log_probs_pol)[:, :-1].sum(-1)
 
                         loss_alpha = (
-                            -parent.log_alpha.exp().to(parent.device)
-                            * (entropy_pol.detach() - parent.target_entropy)
+                            parent.log_alpha.exp().to(parent.device)
+                            * (entropy_pol.detach() + parent.target_entropy)
                         ).mean()
                         parent.log_alpha_optimizer.zero_grad()
                         loss_alpha.backward()

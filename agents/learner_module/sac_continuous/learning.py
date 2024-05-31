@@ -56,8 +56,8 @@ async def learning(parent, timer: ExecutionTimer):
 
                         # alpha loss (auto-tuning)
                         loss_alpha = (
-                            -parent.log_alpha.exp().to(parent.device)
-                            * (-log_probs_pol[:, :-1].detach() - parent.target_entropy)
+                            parent.log_alpha.exp().to(parent.device)
+                            * (log_probs_pol[:, :-1].detach() + parent.target_entropy)
                         ).mean()
                         parent.log_alpha_optimizer.zero_grad()
                         loss_alpha.backward()
