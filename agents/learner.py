@@ -16,7 +16,6 @@ from utils.utils import (
     Protocol,
     encode,
     make_gpu_batch,
-    L_IP,
     ExecutionTimer,
     Params,
     to_torch,
@@ -45,6 +44,8 @@ class LearnerBase(SMInterFace):
         model,
         shm_ref,
         stop_event,
+        learner_ip,
+        learner_port,
         obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -71,7 +72,7 @@ class LearnerBase(SMInterFace):
 
         self.to_gpu = partial(make_gpu_batch, device=self.device)
 
-        self.zeromq_set()
+        self.zeromq_set(learner_ip, learner_port)
         self.get_shared_memory_interface()
         from tensorboardX import SummaryWriter
 
@@ -81,12 +82,11 @@ class LearnerBase(SMInterFace):
         if hasattr(self, "pub_socket"):
             self.pub_socket.close()
 
-    def zeromq_set(self):
+    def zeromq_set(self, learner_ip, learner_port):
         context = zmq.Context()
-
         self.pub_socket = context.socket(zmq.PUB)
         self.pub_socket.bind(
-            f"tcp://{L_IP}:{self.args.learner_port+1}"
+            f"tcp://{learner_ip}:{int(learner_port) + 1}"
         )  # publish fresh learner-model
 
     def pub_model(self, model_state_dict):  # learner -> worker

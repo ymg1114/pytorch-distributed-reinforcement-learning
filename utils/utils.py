@@ -27,6 +27,23 @@ with open(utils) as f:
     Params = SimpleNamespace(**_p)
 
 
+def dict_to_simplenamespace(d):
+    if isinstance(d, dict):
+        for key, value in d.items():
+            d[key] = dict_to_simplenamespace(value)
+        return SimpleNamespace(**d)
+    elif isinstance(d, list):
+        return [dict_to_simplenamespace(item) for item in d]
+    else:
+        return d
+
+
+utils = os.path.join(os.getcwd(), "utils", "machines.json")
+with open(utils) as f:
+    _p = json.load(f)
+    Machines = dict_to_simplenamespace(_p)
+
+
 class SingletonMetaCls(type):
     __instances = {}
 
@@ -67,12 +84,6 @@ model_dir = os.path.join(result_dir, "models")
 ErrorComment = "Should be PPO or IMPALA or SAC"
 
 
-LS_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
-L_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
-W_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
-M_IP = "127.0.0.1"  # 동일 서브넷 다른 머신 사용 가능.
-
-
 flatten = lambda obj: obj.numpy().reshape(-1).astype(np.float32)
 
 
@@ -90,6 +101,20 @@ def extract_file_num(filename):
 def make_gpu_batch(*args, device):
     to_gpu = lambda tensor: tensor.to(device)
     return tuple(map(to_gpu, args))
+
+
+def select_least_used_gpu():
+    # GPU 사용 가능한지 확인
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available")
+
+    # 각 GPU의 메모리 사용량 확인
+    gpus_info = [(torch.cuda.memory_reserved(i), i) for i in range(torch.cuda.device_count())]
+    
+    # 메모리 사용량이 가장 적은 GPU 선택
+    _, best_gpu_idx = min(gpus_info)
+    
+    return best_gpu_idx
 
 
 def get_current_process_id():

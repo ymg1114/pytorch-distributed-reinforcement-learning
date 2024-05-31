@@ -27,7 +27,7 @@ from agents.learner import (
 )
 from agents.worker import Worker
 from agents.learner_storage import LearnerStorage
-from buffers.manager import Manager
+from agents.manager import Manager
 
 from networks.models import (
     MlpLSTMSingle,
@@ -46,6 +46,7 @@ from utils.utils import (
     ChildProcess,
     IsExit,
     ErrorComment,
+    select_least_used_gpu,
 )
 from utils.lock import Mutex
 
@@ -63,7 +64,7 @@ class Runner:
         mp.set_start_method('spawn')
         self.args = Params
         self.args.device = torch.device(
-            f"cuda:{Params.gpu_idx}" if torch.cuda.is_available() else "cpu"
+            f"cuda:{select_least_used_gpu()}" if torch.cuda.is_available() else "cpu"
         )
 
         # 미리 정해진 경로가 있다면 그것을 사용
@@ -153,10 +154,10 @@ class Runner:
 
     @staticmethod
     def worker_run(
-        model, worker_name, stop_event, args, port, *obs_shape, heartbeat=None
+        model, worker_name, stop_event, args, manager_ip, learner_ip, port, learner_port, *obs_shape, heartbeat=None
     ):
         worker = Worker(
-            args, model, worker_name, stop_event, port, obs_shape, heartbeat
+            args, model, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, obs_shape, heartbeat
         )
         asyncio.run(worker.life_cycle_chain())  # collect rollout
 
@@ -166,6 +167,8 @@ class Runner:
         mutex,
         shm_ref,
         stop_event,
+        learner_ip,
+        learner_port,
         *obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -175,6 +178,8 @@ class Runner:
             mutex,
             shm_ref,
             stop_event,
+            learner_ip,
+            learner_port,
             obs_shape,
             shared_stat_array,
             heartbeat,
@@ -189,6 +194,8 @@ class Runner:
         mutex,
         shm_ref,
         stop_event,
+        learner_ip,
+        learner_port,
         *obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -199,6 +206,8 @@ class Runner:
             learner_model,
             shm_ref,
             stop_event,
+            learner_ip,
+            learner_port,
             obs_shape,
             shared_stat_array,
             heartbeat,
@@ -217,10 +226,10 @@ class Runner:
         asyncio.run(learning_chain())
 
     @register
-    def manager_sub_process(self):
+    def manager_sub_process(self, manager_ip, learner_ip, port, learner_port):
         try:
             manager = Manager(
-                self.args, self.stop_event, self.args.worker_port, self.obs_shape
+                self.args, self.stop_event, manager_ip, learner_ip, port, learner_port, self.obs_shape
             )
             asyncio.run(manager.data_chain())
         except:
@@ -233,11 +242,11 @@ class Runner:
             SaveErrorLog(err, log_dir)
 
     @register
-    def worker_sub_process(self):
+    def worker_sub_process(self, num_p, manager_ip, learner_ip, port, learner_port):
         try:
             learner_model_state_dict = self.set_model_weight(self.args.model_dir)
 
-            for i in range(self.args.num_worker):
+            for i in range(int(num_p)):
                 print("Build Worker {:d}".format(i))
                 worker_model = copy.deepcopy(self.Model)
                 worker_model.load_state_dict(learner_model_state_dict)
@@ -252,7 +261,10 @@ class Runner:
                         worker_name,
                         self.stop_event,
                         self.args,
-                        self.args.worker_port,
+                        manager_ip, 
+                        learner_ip,
+                        port,
+                        learner_port,
                         *self.obs_shape,
                     ),
                     "kwargs": {"heartbeat": heartbeat},
@@ -287,7 +299,7 @@ class Runner:
                 wp.terminate()
 
     @register
-    def learner_sub_process(self):
+    def learner_sub_process(self, learner_ip, learner_port):
         try:
             learner_model_state_dict = self.set_model_weight(self.args.model_dir)
             self.Model.load_state_dict(learner_model_state_dict)
@@ -322,6 +334,8 @@ class Runner:
                     mutex,
                     shm_ref,
                     self.stop_event,
+                    learner_ip,
+                    learner_port,
                     *self.obs_shape,
                 ),
                 "kwargs": {
@@ -350,6 +364,8 @@ class Runner:
                     mutex,
                     shm_ref,
                     self.stop_event,
+                    learner_ip,
+                    learner_port,
                     *self.obs_shape,
                 ),
                 "kwargs": {
@@ -456,9 +472,10 @@ class Runner:
 
         #         time.sleep(1.0)
 
-        assert len(sys.argv) == 2
+        assert len(sys.argv) >= 1
         func_name = sys.argv[1]
-
+        func_args = sys.argv[2:]
+        
         if (
             func_name != "manager_sub_process"
         ):  # manager는 관리할 자식 프로세스가 없기 때문.
@@ -486,9 +503,9 @@ class Runner:
 
         try:
             if func_name in fn_dict:
-                fn_dict[func_name](self)
+                fn_dict[func_name](self, *func_args)
             else:
-                assert False, f"Wronf func_name: {func_name}"
+                assert False, f"Wronf func_name: {func_name}, func_args: {func_args}"
             # _monitor_child_process()
 
         except Exception as e:

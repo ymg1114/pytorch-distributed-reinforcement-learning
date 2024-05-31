@@ -8,12 +8,12 @@ import numpy as np
 
 from agents.worker_module.env_maker import EnvBase
 
-from utils.utils import Protocol, encode, decode, W_IP
+from utils.utils import Protocol, encode, decode
 
 
 class Worker:
     def __init__(
-        self, args, model, worker_name, stop_event, port, obs_shape, heartbeat=None
+        self, args, model, worker_name, stop_event, manager_ip, learner_ip, port, learner_port, obs_shape, heartbeat=None
     ):
         self.args = args
         self.device = args.device  # cpu
@@ -34,7 +34,7 @@ class Worker:
         self.worker_name = worker_name
         self.heartbeat = heartbeat
 
-        self.zeromq_set(port)
+        self.zeromq_set(manager_ip, learner_ip, port, learner_port)
 
     def __del__(self):  # 소멸자
         if hasattr(self, "pub_socket"):
@@ -42,16 +42,16 @@ class Worker:
         if hasattr(self, "sub_socket"):
             self.sub_socket.close()
 
-    def zeromq_set(self, port):
+    def zeromq_set(self, manager_ip, learner_ip, port, learner_port):
         context = zmq.asyncio.Context()
 
         # worker <-> manager
         self.pub_socket = context.socket(zmq.PUB)
-        self.pub_socket.connect(f"tcp://{W_IP}:{port}")  # publish rollout, stat
+        self.pub_socket.connect(f"tcp://{manager_ip}:{port}")  # publish rollout, stat
 
         self.sub_socket = context.socket(zmq.SUB)
         self.sub_socket.connect(
-            f"tcp://{W_IP}:{self.args.learner_port+1}"
+            f"tcp://{learner_ip}:{int(learner_port) + 1}"
         )  # subscribe model
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 

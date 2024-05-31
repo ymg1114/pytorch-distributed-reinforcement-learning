@@ -16,7 +16,6 @@ from utils.utils import (
     decode,
     flatten,
     counted,
-    LS_IP,
 )
 
 
@@ -30,6 +29,8 @@ class LearnerStorage(SMInterFace):
         mutex,
         shm_ref,
         stop_event,
+        learner_ip,
+        learner_port,
         obs_shape,
         shared_stat_array=None,
         heartbeat=None,
@@ -49,19 +50,19 @@ class LearnerStorage(SMInterFace):
 
         self.heartbeat = heartbeat
 
-        self.zeromq_set()
+        self.zeromq_set(learner_ip, learner_port)
         self.get_shared_memory_interface()
 
     def __del__(self):  # 소멸자
         if hasattr(self, "sub_socket"):
             self.sub_socket.close()
 
-    def zeromq_set(self):
+    def zeromq_set(self, learner_ip, learner_port):
         context = zmq.asyncio.Context()
 
         # learner-storage <-> manager
         self.sub_socket = context.socket(zmq.SUB)  # subscribe batch-data, stat-data
-        self.sub_socket.bind(f"tcp://{LS_IP}:{self.args.learner_port}")
+        self.sub_socket.bind(f"tcp://{learner_ip}:{learner_port}")
         self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")
 
     async def shared_memory_chain(self):
