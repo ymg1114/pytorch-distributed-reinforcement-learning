@@ -1,6 +1,6 @@
 # pytorch-distributed-reinforcement-learning
 ## Architecture on Distributed Multi Machines 
-![architecture](https://github.com/ymg1114/pytorch-distributed-reinforcement-learning/assets/54105796/69ef7eb5-9475-4803-bbd7-f3dbbe40192b)
+![Architecture on Distributed Multi Machines](https://github.com/ymg1114/pytorch-distributed-reinforcement-learning/assets/54105796/1c362fde-341b-42b0-af5c-193366696943)
 
 ## Algo
 PPO
