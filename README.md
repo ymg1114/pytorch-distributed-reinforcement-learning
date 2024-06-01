@@ -20,7 +20,7 @@ Discrete Learning environment is configured to `CartPole-v1`.
 
 Continuous Learning environment is configured to `MountainCarContinuous-v0`.
 
-You shold check `machines.json`, `parameters.json` for architecture and training parameters.
+You should check `machines.json`, `parameters.json` for architecture and training parameters.
 
 ## How to run
 `python run.py`
